@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { getSettings } from "@/lib/settings";
+import { themeBootScript } from "@/lib/theme-boot";
+import { ThemeSync } from "@/components/theme-sync";
+import { cn } from "@/lib/utils";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -18,17 +22,35 @@ export const metadata: Metadata = {
     "个人多项目无压管理：Inbox + Now/Next/Later，服务 3D Infra / AI 漫剧 / AI 选品",
 };
 
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const settings = getSettings();
+
   return (
     <html
       lang="zh-CN"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
+      className={cn(
+        geistSans.variable,
+        geistMono.variable,
+        "h-full antialiased",
+        settings.theme === "dark" && "dark",
+      )}
     >
-      <body className="min-h-full font-sans">{children}</body>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{ __html: themeBootScript(settings.theme) }}
+        />
+      </head>
+      <body className="min-h-full bg-background font-sans text-foreground">
+        <ThemeSync theme={settings.theme} />
+        {children}
+      </body>
     </html>
   );
 }

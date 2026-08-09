@@ -15,16 +15,22 @@ export function TaskEditor({
   content,
   onChange,
   editorKey,
+  className,
+  minHeightClassName = "min-h-[280px]",
 }: {
   content: string;
   onChange: (json: string) => void;
   editorKey: string;
+  className?: string;
+  minHeightClassName?: string;
 }) {
   return (
     <TaskEditorInner
       key={editorKey}
       initialContent={content}
       onChange={onChange}
+      className={className}
+      minHeightClassName={minHeightClassName}
     />
   );
 }

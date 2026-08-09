@@ -13,22 +13,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { TaskEditor } from "@/components/task-editor";
 
 type CaptureLane = "inbox" | "now" | "next" | "later";
 
 const CAPTURE_LANES: CaptureLane[] = ["inbox", ...ROADMAP_LANES];
+const EMPTY_CONTENT = "[]";
 
 export function InboxCapture({
   projects,
   open,
   onOpenChange,
+  defaultProjectId,
+  defaultLane,
 }: {
   projects: Project[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  defaultProjectId?: string;
+  defaultLane?: CaptureLane;
 }) {
   const router = useRouter();
   const [title, setTitle] = useState("");
+  const [content, setContent] = useState(EMPTY_CONTENT);
+  const [editorKey, setEditorKey] = useState("capture-0");
   const [projectId, setProjectId] = useState("");
   const [lane, setLane] = useState<CaptureLane>("inbox");
   const [saving, setSaving] = useState(false);
@@ -36,10 +44,12 @@ export function InboxCapture({
   useEffect(() => {
     if (!open) return;
     setTitle("");
-    setProjectId("");
-    setLane("inbox");
+    setContent(EMPTY_CONTENT);
+    setEditorKey(`capture-${Date.now()}`);
+    setProjectId(defaultProjectId ?? "");
+    setLane(defaultLane ?? "inbox");
     setSaving(false);
-  }, [open]);
+  }, [open, defaultProjectId, defaultLane]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -85,6 +95,7 @@ export function InboxCapture({
           title: title.trim(),
           lane: lane as Lane,
           projectId: projectId || null,
+          content: content || EMPTY_CONTENT,
         }),
       });
       if (!res.ok) {
@@ -92,6 +103,7 @@ export function InboxCapture({
         throw new Error(data.error || "创建失败");
       }
       setTitle("");
+      setContent(EMPTY_CONTENT);
       setProjectId("");
       setLane("inbox");
       onOpenChange(false);
@@ -110,11 +122,17 @@ export function InboxCapture({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>快速捕捉灵感</DialogTitle>
+          <DialogTitle>
+            {defaultLane && defaultLane !== "inbox"
+              ? "新建事项"
+              : "快速捕捉灵感"}
+          </DialogTitle>
           <DialogDescription>
-            默认放进收件箱；也可直接丢进某个项目的 Now / Next / Later。
+            {defaultLane && defaultLane !== "inbox"
+              ? "已预填当前项目与栏目，可直接写标题和详情。"
+              : "默认放进收件箱；也可直接丢进某个项目的 Now / Next / Later。"}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex flex-col gap-3">
@@ -124,6 +142,18 @@ export function InboxCapture({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
+
+          {open ? (
+            <div className="flex flex-col gap-1">
+              <p className="text-xs text-muted-foreground">详情（可选）</p>
+              <TaskEditor
+                editorKey={editorKey}
+                content={EMPTY_CONTENT}
+                onChange={setContent}
+                minHeightClassName="min-h-[180px]"
+              />
+            </div>
+          ) : null}
 
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">

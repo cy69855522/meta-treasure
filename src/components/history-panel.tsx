@@ -90,7 +90,7 @@ export function HistoryPanel({
 
   return (
     <>
-      <section className="rounded-xl border bg-muted/20 p-4">
+      <section className="mt-4 rounded-xl border bg-muted/20 p-4">
         <header className="mb-4 flex items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold">历史 · 甘特图</h2>

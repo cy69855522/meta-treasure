@@ -28,6 +28,10 @@ import {
   Menu,
   X,
   Settings2,
+  Library,
+  ScrollText,
+  SlidersHorizontal,
+  Crown,
 } from "lucide-react";
 import type { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -35,6 +39,19 @@ import { useMounted } from "@/hooks/use-mounted";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { PiggyBankDialog } from "@/components/piggy-bank-dialog";
+import {
+  PIGGY_BANK_DROP_ID,
+  PiggyBankDropZone,
+} from "@/components/piggy-bank-drop-zone";
 import { ProjectsManager } from "@/components/projects-manager";
 
 function SortableProjectItem({
@@ -112,6 +129,7 @@ function SortableProjectItem({
 
 function ProjectNav({
   items,
+  piggyCount,
   collapsed,
   pathname,
   inboxCount,
@@ -121,10 +139,13 @@ function ProjectNav({
   onNavigate,
   onOpenCapture,
   onOpenManage,
-  showCaptureHint,
+  onOpenCreateSkillFolder,
+  onOpenCreateRuleFolder,
+  onOpenPiggyBank,
   dndId,
 }: {
   items: Project[];
+  piggyCount: number;
   collapsed: boolean;
   pathname: string;
   inboxCount: number;
@@ -134,61 +155,142 @@ function ProjectNav({
   onNavigate?: () => void;
   onOpenCapture: () => void;
   onOpenManage: () => void;
-  showCaptureHint: boolean;
+  onOpenCreateSkillFolder: () => void;
+  onOpenCreateRuleFolder: () => void;
+  onOpenPiggyBank: () => void;
   dndId: string;
 }) {
   return (
     <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
-      {showCaptureHint ? (
-        <div className="mb-1 flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-xs text-muted-foreground">
-          <span>
-            快捷键 <kbd className="rounded border bg-background px-1">C</kbd>{" "}
-            快速捕捉
-          </span>
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="outline"
-            onClick={onOpenCapture}
-            aria-label="打开快速捕捉"
-            title="打开快速捕捉"
-          >
-            <Plus />
-          </Button>
-        </div>
-      ) : (
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="outline"
-          className="mb-1 w-full"
-          onClick={onOpenCapture}
-          aria-label="打开快速捕捉"
-          title="打开快速捕捉"
-        >
-          <Plus />
-        </Button>
-      )}
-
       <Link
-        href="/inbox"
+        href="/steward"
         onClick={onNavigate}
         className={cn(
           "flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors",
+          pathname === "/steward"
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "hover:bg-sidebar-accent/70",
+        )}
+      >
+        <Crown className="size-4 shrink-0" />
+        {!collapsed ? <span className="flex-1">总管家</span> : null}
+      </Link>
+
+      <div
+        className={cn(
+          "flex items-center gap-1 rounded-lg transition-colors",
           pathname === "/inbox"
             ? "bg-sidebar-accent text-sidebar-accent-foreground"
             : "hover:bg-sidebar-accent/70",
         )}
       >
-        <Inbox className="size-4 shrink-0" />
-        {!collapsed ? (
-          <>
-            <span className="flex-1">收件箱</span>
-            {inboxCount > 0 ? (
-              <Badge variant="secondary">{inboxCount}</Badge>
-            ) : null}
-          </>
-        ) : null}
+        <Link
+          href="/inbox"
+          onClick={onNavigate}
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-2 py-2 text-sm",
+            collapsed ? "justify-center px-2.5" : "pl-2.5",
+          )}
+        >
+          <Inbox className="size-4 shrink-0" />
+          {!collapsed ? (
+            <>
+              <span className="flex-1 truncate">收件箱</span>
+              {inboxCount > 0 ? (
+                <Badge variant="secondary">{inboxCount}</Badge>
+              ) : null}
+            </>
+          ) : null}
+        </Link>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className={cn("shrink-0", collapsed ? "mr-0" : "mr-1.5")}
+          onClick={onOpenCapture}
+          aria-label="快捷键 C 快速捕捉"
+          title="快捷键 C 快速捕捉"
+        >
+          <Plus />
+        </Button>
+      </div>
+
+      <div
+        className={cn(
+          "flex items-center gap-1 rounded-lg transition-colors",
+          pathname === "/skills" || pathname.startsWith("/skills/")
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "hover:bg-sidebar-accent/70",
+        )}
+      >
+        <Link
+          href="/skills"
+          onClick={onNavigate}
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-2 py-2 text-sm",
+            collapsed ? "justify-center px-2.5" : "pl-2.5",
+          )}
+        >
+          <Library className="size-4 shrink-0" />
+          {!collapsed ? <span className="flex-1 truncate">技能库</span> : null}
+        </Link>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className={cn("shrink-0", collapsed ? "mr-0" : "mr-1.5")}
+          onClick={onOpenCreateSkillFolder}
+          aria-label="新建技能目录"
+          title="新建技能目录"
+        >
+          <Plus />
+        </Button>
+      </div>
+
+      <div
+        className={cn(
+          "flex items-center gap-1 rounded-lg transition-colors",
+          pathname === "/rules" || pathname.startsWith("/rules/")
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "hover:bg-sidebar-accent/70",
+        )}
+      >
+        <Link
+          href="/rules"
+          onClick={onNavigate}
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-2 py-2 text-sm",
+            collapsed ? "justify-center px-2.5" : "pl-2.5",
+          )}
+        >
+          <ScrollText className="size-4 shrink-0" />
+          {!collapsed ? <span className="flex-1 truncate">规则库</span> : null}
+        </Link>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          className={cn("shrink-0", collapsed ? "mr-0" : "mr-1.5")}
+          onClick={onOpenCreateRuleFolder}
+          aria-label="新建规则目录"
+          title="新建规则目录"
+        >
+          <Plus />
+        </Button>
+      </div>
+
+      <Link
+        href="/settings"
+        onClick={onNavigate}
+        className={cn(
+          "flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors",
+          pathname === "/settings"
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "hover:bg-sidebar-accent/70",
+        )}
+      >
+        <SlidersHorizontal className="size-4 shrink-0" />
+        {!collapsed ? <span className="flex-1">配置项</span> : null}
       </Link>
 
       {!collapsed ? (
@@ -245,36 +347,48 @@ function ProjectNav({
               ))}
             </div>
           </SortableContext>
+          <PiggyBankDropZone
+            collapsed={collapsed}
+            count={piggyCount}
+            onOpen={onOpenPiggyBank}
+          />
         </DndContext>
       ) : (
-        <div className="flex flex-col gap-1">
-          {items.map((project) => {
-            const href = `/projects/${project.id}`;
-            const active = pathname === href;
-            return (
-              <Link
-                key={project.id}
-                href={href}
-                onClick={onNavigate}
-                className={cn(
-                  "flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "hover:bg-sidebar-accent/70",
-                )}
-                title={project.description}
-              >
-                <span
-                  className="size-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: project.color }}
-                />
-                {!collapsed ? (
-                  <span className="flex-1 truncate">{project.name}</span>
-                ) : null}
-              </Link>
-            );
-          })}
-        </div>
+        <>
+          <div className="flex flex-col gap-1">
+            {items.map((project) => {
+              const href = `/projects/${project.id}`;
+              const active = pathname === href;
+              return (
+                <Link
+                  key={project.id}
+                  href={href}
+                  onClick={onNavigate}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors",
+                    active
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "hover:bg-sidebar-accent/70",
+                  )}
+                  title={project.description}
+                >
+                  <span
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: project.color }}
+                  />
+                  {!collapsed ? (
+                    <span className="flex-1 truncate">{project.name}</span>
+                  ) : null}
+                </Link>
+              );
+            })}
+          </div>
+          <PiggyBankDropZone
+            collapsed={collapsed}
+            count={piggyCount}
+            onOpen={onOpenPiggyBank}
+          />
+        </>
       )}
     </nav>
   );
@@ -282,11 +396,15 @@ function ProjectNav({
 
 export function Sidebar({
   projects,
+  piggyBankProjects,
+  allProjects,
   inboxCount,
   onOpenCapture,
   children,
 }: {
   projects: Project[];
+  piggyBankProjects: Project[];
+  allProjects: Project[];
   inboxCount: number;
   onOpenCapture: () => void;
   children: React.ReactNode;
@@ -298,6 +416,13 @@ export function Sidebar({
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  const [piggyOpen, setPiggyOpen] = useState(false);
+  const [createFolderOpen, setCreateFolderOpen] = useState(false);
+  const [folderName, setFolderName] = useState("");
+  const [folderSaving, setFolderSaving] = useState(false);
+  const [createRuleFolderOpen, setCreateRuleFolderOpen] = useState(false);
+  const [ruleFolderName, setRuleFolderName] = useState("");
+  const [ruleFolderSaving, setRuleFolderSaving] = useState(false);
   const [items, setItems] = useState(projects);
   // Only one DnD tree at a time to avoid hydration / id clashes.
   const enableMobileDnd = mounted && !isDesktop;
@@ -328,6 +453,27 @@ export function Sidebar({
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
+    if (over.id === PIGGY_BANK_DROP_ID) {
+      const projectId = String(active.id);
+      const prev = items;
+      setItems((list) => list.filter((p) => p.id !== projectId));
+      const res = await fetch(`/api/projects/${projectId}/piggy-bank`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inPiggyBank: true }),
+      });
+      if (!res.ok) {
+        setItems(prev);
+        const data = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        alert(data?.error || "移入储蓄罐失败");
+        return;
+      }
+      router.refresh();
+      return;
+    }
+
     const oldIndex = items.findIndex((p) => p.id === active.id);
     const newIndex = items.findIndex((p) => p.id === over.id);
     if (oldIndex < 0 || newIndex < 0) return;
@@ -343,15 +489,93 @@ export function Sidebar({
 
     if (!res.ok) {
       setItems(projects);
-      alert("项目排序保存失败");
+      const data = (await res.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      alert(data?.error || "项目排序保存失败");
       return;
     }
 
     router.refresh();
   }
 
+  function openCreateSkillFolder() {
+    setFolderName("");
+    setCreateFolderOpen(true);
+  }
+
+  function openCreateRuleFolder() {
+    setRuleFolderName("");
+    setCreateRuleFolderOpen(true);
+  }
+
+  async function createSkillFolder(event: React.FormEvent) {
+    event.preventDefault();
+    if (!folderName.trim() || folderSaving) return;
+    setFolderSaving(true);
+    try {
+      const res = await fetch("/api/skill-folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: folderName }),
+      });
+      const data = (await res.json()) as {
+        folder?: { id: string };
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(data.error || "创建失败");
+      }
+      setCreateFolderOpen(false);
+      setMobileOpen(false);
+      router.refresh();
+      if (data.folder?.id) {
+        router.push(`/skills/${data.folder.id}`);
+      } else {
+        router.push("/skills");
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "创建失败");
+    } finally {
+      setFolderSaving(false);
+    }
+  }
+
+  async function createRuleFolder(event: React.FormEvent) {
+    event.preventDefault();
+    if (!ruleFolderName.trim() || ruleFolderSaving) return;
+    setRuleFolderSaving(true);
+    try {
+      const res = await fetch("/api/rule-folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: ruleFolderName }),
+      });
+      const data = (await res.json()) as {
+        folder?: { id: string };
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(data.error || "创建失败");
+      }
+      setCreateRuleFolderOpen(false);
+      setMobileOpen(false);
+      router.refresh();
+      if (data.folder?.id) {
+        router.push(`/rules/${data.folder.id}`);
+      } else {
+        router.push("/rules");
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "创建失败");
+    } finally {
+      setRuleFolderSaving(false);
+    }
+  }
+
   const mobileNavProps = {
     items,
+    piggyCount: piggyBankProjects.length,
     pathname,
     inboxCount,
     mounted: enableMobileDnd,
@@ -359,10 +583,14 @@ export function Sidebar({
     onDragEnd,
     onOpenCapture,
     onOpenManage: () => setManageOpen(true),
+    onOpenCreateSkillFolder: openCreateSkillFolder,
+    onOpenCreateRuleFolder: openCreateRuleFolder,
+    onOpenPiggyBank: () => setPiggyOpen(true),
   };
 
   const desktopNavProps = {
     items,
+    piggyCount: piggyBankProjects.length,
     pathname,
     inboxCount,
     mounted: enableDesktopDnd,
@@ -370,6 +598,9 @@ export function Sidebar({
     onDragEnd,
     onOpenCapture,
     onOpenManage: () => setManageOpen(true),
+    onOpenCreateSkillFolder: openCreateSkillFolder,
+    onOpenCreateRuleFolder: openCreateRuleFolder,
+    onOpenPiggyBank: () => setPiggyOpen(true),
   };
 
   return (
@@ -435,7 +666,6 @@ export function Sidebar({
           <ProjectNav
             {...mobileNavProps}
             collapsed={false}
-            showCaptureHint
             dndId="sidebar-projects-mobile"
             onNavigate={() => setMobileOpen(false)}
           />
@@ -479,7 +709,6 @@ export function Sidebar({
           <ProjectNav
             {...desktopNavProps}
             collapsed={collapsed}
-            showCaptureHint={!collapsed}
             dndId="sidebar-projects-desktop"
           />
         </aside>
@@ -488,10 +717,87 @@ export function Sidebar({
       </div>
 
       <ProjectsManager
-        projects={items}
+        projects={allProjects}
         open={manageOpen}
         onOpenChange={setManageOpen}
       />
+
+      <PiggyBankDialog
+        open={piggyOpen}
+        onOpenChange={setPiggyOpen}
+        projects={piggyBankProjects}
+      />
+
+      <Dialog open={createFolderOpen} onOpenChange={setCreateFolderOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>新建技能目录</DialogTitle>
+            <DialogDescription>
+              名称不能与已有文件夹重复（不区分大小写）。
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={createSkillFolder} className="flex flex-col gap-3">
+            <Input
+              autoFocus
+              placeholder="例如：写作 / 选品 / 代码审查"
+              value={folderName}
+              onChange={(e) => setFolderName(e.target.value)}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setCreateFolderOpen(false)}
+              >
+                取消
+              </Button>
+              <Button
+                type="submit"
+                disabled={folderSaving || !folderName.trim()}
+              >
+                {folderSaving ? "创建中…" : "创建"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={createRuleFolderOpen}
+        onOpenChange={setCreateRuleFolderOpen}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>新建规则目录</DialogTitle>
+            <DialogDescription>
+              名称不能与已有文件夹重复（不区分大小写）。
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={createRuleFolder} className="flex flex-col gap-3">
+            <Input
+              autoFocus
+              placeholder="例如：前端 / 后端 / 写作风格"
+              value={ruleFolderName}
+              onChange={(e) => setRuleFolderName(e.target.value)}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setCreateRuleFolderOpen(false)}
+              >
+                取消
+              </Button>
+              <Button
+                type="submit"
+                disabled={ruleFolderSaving || !ruleFolderName.trim()}
+              >
+                {ruleFolderSaving ? "创建中…" : "创建"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

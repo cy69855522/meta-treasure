@@ -20,6 +20,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useDroppable } from "@dnd-kit/core";
+import { Plus } from "lucide-react";
 import type { Lane, Project, Task } from "@/lib/types";
 import {
   LANE_LABELS,
@@ -30,11 +31,16 @@ import { cn } from "@/lib/utils";
 import { useMounted } from "@/hooks/use-mounted";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InboxCapture } from "@/components/inbox-capture";
 import { TaskModal } from "@/components/task-modal";
 import { HistoryPanel } from "@/components/history-panel";
 import { TaskTimestamps } from "@/components/task-timestamps";
 
 type RoadmapLane = (typeof ROADMAP_LANES)[number];
+
+/** ~3 task cards + 2 gaps; overflow scrolls with scrollbar hidden. */
+const LANE_TASK_LIST_CLASS =
+  "flex h-[calc(3*7.25rem+2*0.5rem)] flex-col gap-2 overflow-y-auto scrollbar-none";
 
 function TaskCard({
   task,
@@ -145,9 +151,11 @@ function SortableTaskCard({
 function LaneHeader({
   lane,
   count,
+  onAdd,
 }: {
   lane: RoadmapLane;
   count: number;
+  onAdd: (lane: RoadmapLane) => void;
 }) {
   const overLimit = lane === "now" && count >= NOW_WIP_LIMIT;
   return (
@@ -160,10 +168,23 @@ function LaneHeader({
           </p>
         ) : null}
       </div>
-      <Badge variant={overLimit ? "default" : "secondary"}>
-        {count}
-        {lane === "now" ? `/${NOW_WIP_LIMIT}` : ""}
-      </Badge>
+      <div className="flex items-center gap-1.5">
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="outline"
+          aria-label={`在 ${LANE_LABELS[lane]} 新建事项`}
+          title="新建事项"
+          onClick={() => onAdd(lane)}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <Plus />
+        </Button>
+        <Badge variant={overLimit ? "default" : "secondary"}>
+          {count}
+          {lane === "now" ? `/${NOW_WIP_LIMIT}` : ""}
+        </Badge>
+      </div>
     </header>
   );
 }
@@ -174,23 +195,25 @@ function StaticLaneColumn({
   onOpen,
   onComplete,
   onDelete,
+  onAdd,
 }: {
   lane: RoadmapLane;
   tasks: Task[];
   onOpen: (task: Task) => void;
   onComplete: (task: Task) => void;
   onDelete: (task: Task) => void;
+  onAdd: (lane: RoadmapLane) => void;
 }) {
   const overLimit = lane === "now" && tasks.length >= NOW_WIP_LIMIT;
   return (
     <section
       className={cn(
-        "flex min-h-[420px] flex-1 flex-col rounded-xl border bg-muted/30 p-3",
+        "flex flex-1 flex-col rounded-xl border bg-muted/30 p-3",
         overLimit && "border-amber-400/60",
       )}
     >
-      <LaneHeader lane={lane} count={tasks.length} />
-      <div className="flex flex-1 flex-col gap-2">
+      <LaneHeader lane={lane} count={tasks.length} onAdd={onAdd} />
+      <div className={LANE_TASK_LIST_CLASS}>
         {tasks.map((task) => (
           <TaskCard
             key={task.id}
@@ -211,12 +234,14 @@ function LaneColumn({
   onOpen,
   onComplete,
   onDelete,
+  onAdd,
 }: {
   lane: RoadmapLane;
   tasks: Task[];
   onOpen: (task: Task) => void;
   onComplete: (task: Task) => void;
   onDelete: (task: Task) => void;
+  onAdd: (lane: RoadmapLane) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: lane });
   const overLimit = lane === "now" && tasks.length >= NOW_WIP_LIMIT;
@@ -225,17 +250,17 @@ function LaneColumn({
     <section
       ref={setNodeRef}
       className={cn(
-        "flex min-h-[420px] flex-1 flex-col rounded-xl border bg-muted/30 p-3",
+        "flex flex-1 flex-col rounded-xl border bg-muted/30 p-3",
         isOver && "ring-2 ring-ring/40",
         overLimit && "border-amber-400/60",
       )}
     >
-      <LaneHeader lane={lane} count={tasks.length} />
+      <LaneHeader lane={lane} count={tasks.length} onAdd={onAdd} />
       <SortableContext
         items={tasks.map((t) => t.id)}
         strategy={verticalListSortingStrategy}
       >
-        <div className="flex flex-1 flex-col gap-2">
+        <div className={LANE_TASK_LIST_CLASS}>
           {tasks.map((task) => (
             <SortableTaskCard
               key={task.id}
@@ -268,10 +293,17 @@ export function RoadmapBoard({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Task | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [captureLane, setCaptureLane] = useState<RoadmapLane>("now");
 
   useEffect(() => {
     setTasks(initialTasks);
   }, [initialTasks]);
+
+  function openCreateInLane(lane: RoadmapLane) {
+    setCaptureLane(lane);
+    setCaptureOpen(true);
+  }
 
   async function completeTask(task: Task) {
     if (!confirm(`将「${task.title}」标记为完成，并移入历史？`)) return;
@@ -436,6 +468,7 @@ export function RoadmapBoard({
                 onOpen={openTask}
                 onComplete={completeTask}
                 onDelete={deleteTask}
+                onAdd={openCreateInLane}
               />
             ))}
           </div>
@@ -455,6 +488,7 @@ export function RoadmapBoard({
               onOpen={openTask}
               onComplete={completeTask}
               onDelete={deleteTask}
+              onAdd={openCreateInLane}
             />
           ))}
         </div>
@@ -467,6 +501,14 @@ export function RoadmapBoard({
         projects={projects}
         open={modalOpen}
         onOpenChange={setModalOpen}
+      />
+
+      <InboxCapture
+        projects={projects}
+        open={captureOpen}
+        onOpenChange={setCaptureOpen}
+        defaultProjectId={project.id}
+        defaultLane={captureLane}
       />
     </>
   );

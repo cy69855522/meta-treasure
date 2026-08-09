@@ -10,6 +10,12 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "orderedIds required" }, { status: 400 });
   }
 
-  reorderProjects(body.orderedIds);
-  return Response.json({ ok: true });
+  try {
+    reorderProjects(body.orderedIds);
+    return Response.json({ ok: true });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Reorder failed";
+    return Response.json({ error: message }, { status: 400 });
+  }
 }

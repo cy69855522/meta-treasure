@@ -277,6 +277,11 @@ export function ProjectsManager({
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">
                           {project.name}
+                          {project.inPiggyBank ? (
+                            <span className="ml-2 text-xs font-normal text-muted-foreground">
+                              · 储蓄罐
+                            </span>
+                          ) : null}
                         </p>
                         {project.description ? (
                           <p className="mt-0.5 text-xs text-muted-foreground">

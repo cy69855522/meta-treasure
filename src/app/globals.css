@@ -121,10 +121,21 @@
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
-  }
   html {
     @apply font-sans;
+    /* Slightly larger base so rem-based text-sm/xs scale up across the app */
+    font-size: 17.5px;
   }
+  body {
+    @apply bg-background text-foreground text-base;
+  }
+}
+
+/* Scrollable regions that keep overflow but hide the scrollbar. */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }

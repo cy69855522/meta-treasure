@@ -1,0 +1,54 @@
+---
+description: Progress UI — Linear-inspired product density adapted to shadcn/Geist
+globs: src/**/*.{tsx,css}
+alwaysApply: false
+---
+
+# Progress UI design
+
+Visual north star: [Linear DESIGN.md](https://github.com/VoltAgent/awesome-design-md/tree/main/design-md/linear.app) (dense, precise, calm tool UI). Adapt to this app — do not clone Linear’s lavender marketing brand.
+
+## Stack constraints
+
+- Tokens live in `src/app/globals.css` (shadcn / oklch). Prefer `bg-background`, `bg-muted`, `bg-card`, `border`, `text-muted-foreground`, `ring` over hard-coded hex.
+- Fonts: Geist Sans / Geist Mono already wired — keep them; no new display families for product chrome.
+- Light + dark both ship; every surface must work in both themes.
+- Product chrome is a working board (sidebar + roadmap + chat), not a marketing landing page.
+
+## Atmosphere
+
+- Quiet software craft: high information density, low decoration.
+- Hierarchy via surface lift + hairline borders, not shadows / glow / gradients.
+- Accent color is scarce: primary actions, focus rings, active nav — never large fills or section backgrounds.
+- “无压” means calm copy and uncluttered lanes, not empty marketing whitespace.
+
+## Layout & density
+
+- Spacing scale preference: 4 / 8 / 12 / 16 / 24 / 32. Prefer tight gaps in lists and boards.
+- Sidebar + main content: one clear composition; avoid dashboard-of-cards chrome.
+- Cards only when they wrap a real interaction (task, dialog, approval). If border/bg/radius can go without hurting clarity, drop them.
+- Prefer rows / lanes / compact lists over padded feature tiles.
+- Radius: stick to existing `--radius` (≈ shadcn md). Primary buttons ≈ 8px feel; reserve pills for tiny status chips only — not CTAs.
+
+## Components
+
+- Buttons: primary for the one decisive action; ghost/secondary for the rest. Compact padding (≈ `8px 14px` feel via existing Button sizes).
+- Inputs: muted surface, hairline border, clear focus ring (`ring`), no heavy inset shadows.
+- Dialogs / sheets: one job, short header, no decorative hero art.
+- Chat: readable body type, restrained bubbles; tool-approval cards stay scannable (before/after), not flashy.
+- Status / badges: small, muted; project color dots may stay chromatic (domain data), but don’t add a second global brand accent.
+
+## Do
+
+- Reuse `components/ui/*` before inventing new primitives.
+- Keep type mostly regular/medium; headings semibold, not ultra-bold display.
+- Collapse chrome on mobile (drawer nav already); keep ≥40px tap targets on controls.
+- Match surrounding patterns in `sidebar`, `roadmap-board`, agent panels.
+
+## Don’t
+
+- Don’t add purple-on-white / indigo glow themes, cream+terracotta “AI default” looks, or broadsheet newspaper layouts.
+- Don’t use atmospheric gradients, spotlight cards, emoji clusters, or multi-layer shadows.
+- Don’t pill-round primary CTAs or flood the UI with accent fills.
+- Don’t build marketing sections (stats strips, logo clouds, hero slogans) inside the app shell.
+- Don’t introduce a second chromatic accent system beyond existing semantic tokens + per-project colors.
