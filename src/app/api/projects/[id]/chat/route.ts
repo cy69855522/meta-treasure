@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 import { getProject } from "@/lib/db";
+import { formatLlmError } from "@/lib/llm-error";
 import { streamProjectAgentChat } from "@/lib/project-agent";
 
 export const dynamic = "force-dynamic";
@@ -15,18 +16,25 @@ export async function POST(request: Request, { params }: Params) {
   try {
     const body = (await request.json()) as {
       messages?: UIMessage[];
+      trigger?: "submit-message" | "regenerate-message";
     };
 
     const result = await streamProjectAgentChat({
       projectId: id,
       uiMessages: body.messages ?? [],
       abortSignal: request.signal,
+      trigger: body.trigger,
     });
 
-    return result.toUIMessageStreamResponse();
+    return result.toUIMessageStreamResponse({
+      onError: formatLlmError,
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Chat failed";
-    const status = message === "Empty user message" ? 400 : 500;
+    const message = formatLlmError(error);
+    const status =
+      error instanceof Error && error.message === "Empty user message"
+        ? 400
+        : 500;
     return Response.json({ error: message }, { status });
   }
 }

@@ -23,6 +23,10 @@ import {
   listStewardMessages,
   listTasks,
 } from "@/lib/db";
+import {
+  buildSkillsCatalogBlock,
+  SKILL_LOAD_PROMPT_LINES,
+} from "@/lib/library-catalog";
 import { LANE_LABELS, NOW_WIP_LIMIT, type Lane, type Task } from "@/lib/types";
 
 function requireEnv(name: string): string {
@@ -116,6 +120,7 @@ export function buildProjectAgentSystemPrompt(projectId: string): string {
     "你是该项目的顾问（Project Agent）。",
     "你可以分析进度、讨论想法、在用户迷茫时给方向。",
     "若要增删改长期笔记或任务，必须调用对应 function tool；系统会先让用户预览确认，通过后才会真正落库。",
+    "要把任务标为完成时，优先调用 completeTask（移入 Done），不要用 deleteTask。",
     "在用户确认前，不要声称已经改过看板或笔记。",
     "若用户拒绝某次 tool 执行，不要重试同一操作；告知未应用即可。",
     "对用户说话时只用项目名、任务标题、笔记标题等可读名称；禁止在回复正文中写出 id / UUID / 哈希。",
@@ -124,6 +129,7 @@ export function buildProjectAgentSystemPrompt(projectId: string): string {
     "「近期总管家对话」为只读参考，可用来承接用户刚与总管家对齐的方向；若与本项目看板/笔记冲突，以本项目快照为准。",
     "不要根据总管家摘录声称对方已改过本项目看板或笔记。",
     "若历史对话与本次快照冲突，以本次快照为准，不要沿用过时任务/泳道状态。",
+    ...SKILL_LOAD_PROMPT_LINES,
     `Now 列 WIP 上限为 ${NOW_WIP_LIMIT}。`,
     "",
     `项目名称：${project.name}`,
@@ -137,6 +143,9 @@ export function buildProjectAgentSystemPrompt(projectId: string): string {
     "",
     `=== 近期总管家对话（最近 ${STEWARD_HANDOFF_ROUNDS} 轮，只读参考） ===`,
     buildStewardRecentDialogueBlock(),
+    "",
+    "=== 技能库目录（folder/skill id + name / description，无正文） ===",
+    buildSkillsCatalogBlock(),
     custom ? `\n=== 额外指令 ===\n${custom}` : "",
   ]
     .filter(Boolean)
@@ -167,6 +176,8 @@ export async function streamProjectAgentChat(input: {
   projectId: string;
   uiMessages: UIMessage[];
   abortSignal?: AbortSignal;
+  /** AI SDK send trigger — regenerate must not re-persist the user turn. */
+  trigger?: "submit-message" | "regenerate-message";
 }) {
   const project = getProject(input.projectId);
   if (!project) {
@@ -177,17 +188,20 @@ export async function streamProjectAgentChat(input: {
 
   const last = input.uiMessages.at(-1);
   const isContinuation = last?.role === "assistant";
+  const isRegenerate = input.trigger === "regenerate-message";
 
   if (!isContinuation) {
     const userText = extractLastUserText(input.uiMessages);
     if (!userText) {
       throw new Error("Empty user message");
     }
-    createAgentMessage({
-      projectId: input.projectId,
-      role: "user",
-      content: userText,
-    });
+    if (!isRegenerate) {
+      createAgentMessage({
+        projectId: input.projectId,
+        role: "user",
+        content: userText,
+      });
+    }
   }
 
   const tools = buildProjectAgentTools(input.projectId);

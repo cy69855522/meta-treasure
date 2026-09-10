@@ -29,6 +29,7 @@ import {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useMounted } from "@/hooks/use-mounted";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InboxCapture } from "@/components/inbox-capture";
@@ -62,7 +63,12 @@ function TaskCard({
         dragging && "opacity-80 shadow-lg",
       )}
     >
-      <button type="button" onClick={() => onOpen(task)} className="w-full text-left">
+      <button
+        type="button"
+        onClick={() => onOpen(task)}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="w-full touch-manipulation text-left"
+      >
         <p className="text-sm font-medium leading-snug">{task.title}</p>
         <TaskTimestamps task={task} compact />
         {Object.keys(task.attributes).length > 0 ? (
@@ -289,6 +295,9 @@ export function RoadmapBoard({
 }) {
   const router = useRouter();
   const mounted = useMounted();
+  const { matches: isDesktop } = useMediaQuery("(min-width: 768px)");
+  // PointerSensor on touch devices often swallows taps on cards/buttons.
+  const enableDnd = mounted && isDesktop;
   const [tasks, setTasks] = useState(initialTasks);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Task | null>(null);
@@ -451,7 +460,7 @@ export function RoadmapBoard({
 
   return (
     <>
-      {mounted ? (
+      {enableDnd ? (
         <DndContext
           id="roadmap-board"
           sensors={sensors}

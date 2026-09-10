@@ -3,10 +3,11 @@ import {
   ensureProjectAgent,
   getProject,
   listAgentMemoryNotes,
-  listAgentMessages,
+  listAgentMessagesPage,
   listProjects,
   listTasks,
 } from "@/lib/db";
+import { CHAT_HISTORY_PAGE_SIZE } from "@/lib/constants";
 import { ProjectAgentPanel } from "@/components/project-agent-panel";
 import { RoadmapBoard } from "@/components/roadmap-board";
 
@@ -24,7 +25,9 @@ export default async function ProjectPage({ params }: Params) {
   const tasks = listTasks({ projectId: id }).filter((t) =>
     ["now", "next", "later", "done"].includes(t.lane),
   );
-  const agentMessages = listAgentMessages(id);
+  const historyPage = listAgentMessagesPage(id, {
+    limit: CHAT_HISTORY_PAGE_SIZE,
+  });
   const agentNotes = listAgentMemoryNotes(id);
 
   return (
@@ -33,7 +36,8 @@ export default async function ProjectPage({ params }: Params) {
       projectName={project.name}
       projectColor={project.color}
       projectDescription={project.description}
-      initialMessages={agentMessages}
+      initialMessages={historyPage.messages}
+      initialHasMore={historyPage.hasMore}
       initialNotes={agentNotes}
     >
       <RoadmapBoard

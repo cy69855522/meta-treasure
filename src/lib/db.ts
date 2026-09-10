@@ -3,7 +3,7 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
-import { AGENT_PROMPT_MESSAGE_LIMIT } from "./constants";
+import { AGENT_PROMPT_MESSAGE_LIMIT, CHAT_HISTORY_PAGE_SIZE } from "./constants";
 import type {
   AgentMemoryNote,
   AgentMessage,
@@ -1138,6 +1138,63 @@ export function listAgentMessages(
   return rows.map(mapAgentMessage);
 }
 
+export function countAgentMessages(projectId: string): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS c FROM agent_messages WHERE project_id = ?")
+    .get(projectId) as { c: number };
+  return row.c;
+}
+
+/**
+ * Newest-first page of Agent Messages (returned oldest→newest).
+ * Pass `beforeId` to load messages older than that id.
+ */
+export function listAgentMessagesPage(
+  projectId: string,
+  options?: { limit?: number; beforeId?: string },
+): { messages: AgentMessage[]; hasMore: boolean } {
+  const limit = options?.limit ?? CHAT_HISTORY_PAGE_SIZE;
+  const take = limit + 1;
+  const beforeId = options?.beforeId?.trim();
+
+  let rows: AgentMessageRow[];
+  if (beforeId) {
+    rows = getDb()
+      .prepare(
+        `SELECT * FROM (
+           SELECT m.* FROM agent_messages m
+           JOIN agent_messages cursor ON cursor.id = ?
+           WHERE m.project_id = ?
+             AND cursor.project_id = ?
+             AND (
+               m.created_at < cursor.created_at
+               OR (m.created_at = cursor.created_at AND m.id < cursor.id)
+             )
+           ORDER BY m.created_at DESC, m.id DESC
+           LIMIT ?
+         ) AS older
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all(beforeId, projectId, projectId, take) as AgentMessageRow[];
+  } else {
+    rows = getDb()
+      .prepare(
+        `SELECT * FROM (
+           SELECT * FROM agent_messages
+           WHERE project_id = ?
+           ORDER BY created_at DESC, id DESC
+           LIMIT ?
+         ) AS recent
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all(projectId, take) as AgentMessageRow[];
+  }
+
+  const hasMore = rows.length > limit;
+  const slice = hasMore ? rows.slice(rows.length - limit) : rows;
+  return { messages: slice.map(mapAgentMessage), hasMore };
+}
+
 export function createAgentMessage(input: {
   projectId: string;
   role: AgentMessageRole;
@@ -1167,9 +1224,10 @@ export function getAgentMessage(id: string): AgentMessage | null {
 }
 
 /**
- * Delete this message and every later message in the project conversation.
+ * Delete from a cut point in the project conversation.
  * Resolve cut point by messageId, then userOrdinal (0-based among user turns),
  * then keepCount (messages retained from the start).
+ * When keepMessage is true, the cut message itself is kept and only later ones are deleted.
  */
 export function rewindAgentMessages(
   projectId: string,
@@ -1177,8 +1235,9 @@ export function rewindAgentMessages(
     messageId?: string;
     keepCount: number;
     userOrdinal?: number;
+    keepMessage?: boolean;
   },
-): { kept: number; deleted: number; messages: AgentMessage[] } {
+): { kept: number; deleted: number; messages: AgentMessage[]; hasMore: boolean } {
   const all = listAgentMessages(projectId);
   let startIndex = -1;
   if (input.messageId) {
@@ -1197,6 +1256,9 @@ export function rewindAgentMessages(
   if (startIndex < 0) {
     startIndex = Math.max(0, Math.min(input.keepCount, all.length));
   }
+  if (input.keepMessage && startIndex >= 0) {
+    startIndex += 1;
+  }
 
   const toDelete = all.slice(startIndex);
   if (toDelete.length > 0) {
@@ -1211,11 +1273,14 @@ export function rewindAgentMessages(
     }
   }
 
-  const messages = listAgentMessages(projectId);
+  const page = listAgentMessagesPage(projectId, {
+    limit: CHAT_HISTORY_PAGE_SIZE,
+  });
   return {
-    kept: messages.length,
+    kept: countAgentMessages(projectId),
     deleted: toDelete.length,
-    messages,
+    messages: page.messages,
+    hasMore: page.hasMore,
   };
 }
 
@@ -1367,12 +1432,7 @@ export function getSkill(id: string): Skill | null {
 }
 
 function normalizeSkillName(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
+  return name.trim().replace(/\s+/g, " ").slice(0, 120);
 }
 
 export function createSkill(input: {
@@ -1604,12 +1664,7 @@ export function getRule(id: string): Rule | null {
 }
 
 function normalizeRuleName(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
+  return name.trim().replace(/\s+/g, " ").slice(0, 120);
 }
 
 export function createRule(input: {
@@ -1798,6 +1853,60 @@ export function listStewardMessages(options?: {
   return rows.map(mapStewardMessage);
 }
 
+export function countStewardMessages(): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS c FROM steward_messages")
+    .get() as { c: number };
+  return row.c;
+}
+
+/**
+ * Newest-first page of Steward Messages (returned oldest→newest).
+ * Pass `beforeId` to load messages older than that id.
+ */
+export function listStewardMessagesPage(options?: {
+  limit?: number;
+  beforeId?: string;
+}): { messages: StewardMessage[]; hasMore: boolean } {
+  const limit = options?.limit ?? CHAT_HISTORY_PAGE_SIZE;
+  const take = limit + 1;
+  const beforeId = options?.beforeId?.trim();
+
+  let rows: StewardMessageRow[];
+  if (beforeId) {
+    rows = getDb()
+      .prepare(
+        `SELECT * FROM (
+           SELECT m.* FROM steward_messages m
+           JOIN steward_messages cursor ON cursor.id = ?
+           WHERE (
+             m.created_at < cursor.created_at
+             OR (m.created_at = cursor.created_at AND m.id < cursor.id)
+           )
+           ORDER BY m.created_at DESC, m.id DESC
+           LIMIT ?
+         ) AS older
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all(beforeId, take) as StewardMessageRow[];
+  } else {
+    rows = getDb()
+      .prepare(
+        `SELECT * FROM (
+           SELECT * FROM steward_messages
+           ORDER BY created_at DESC, id DESC
+           LIMIT ?
+         ) AS recent
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all(take) as StewardMessageRow[];
+  }
+
+  const hasMore = rows.length > limit;
+  const slice = hasMore ? rows.slice(rows.length - limit) : rows;
+  return { messages: slice.map(mapStewardMessage), hasMore };
+}
+
 export function createStewardMessage(input: {
   role: AgentMessageRole;
   content: string;
@@ -1826,14 +1935,16 @@ export function getStewardMessage(id: string): StewardMessage | null {
 }
 
 /**
- * Delete this message and every later Steward message.
+ * Delete from a cut point in the Steward conversation.
  * Resolve cut point by messageId, then userOrdinal, then keepCount.
+ * When keepMessage is true, the cut message itself is kept and only later ones are deleted.
  */
 export function rewindStewardMessages(input: {
   messageId?: string;
   keepCount: number;
   userOrdinal?: number;
-}): { kept: number; deleted: number; messages: StewardMessage[] } {
+  keepMessage?: boolean;
+}): { kept: number; deleted: number; messages: StewardMessage[]; hasMore: boolean } {
   const all = listStewardMessages();
   let startIndex = -1;
   if (input.messageId) {
@@ -1852,6 +1963,9 @@ export function rewindStewardMessages(input: {
   if (startIndex < 0) {
     startIndex = Math.max(0, Math.min(input.keepCount, all.length));
   }
+  if (input.keepMessage && startIndex >= 0) {
+    startIndex += 1;
+  }
 
   const toDelete = all.slice(startIndex);
   if (toDelete.length > 0) {
@@ -1866,11 +1980,12 @@ export function rewindStewardMessages(input: {
     }
   }
 
-  const messages = listStewardMessages();
+  const page = listStewardMessagesPage({ limit: CHAT_HISTORY_PAGE_SIZE });
   return {
-    kept: messages.length,
+    kept: countStewardMessages(),
     deleted: toDelete.length,
-    messages,
+    messages: page.messages,
+    hasMore: page.hasMore,
   };
 }
 

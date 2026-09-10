@@ -23,6 +23,7 @@ export const AGENT_TOOL_NAMES = [
   "deleteMemoryNote",
   "createTask",
   "updateTask",
+  "completeTask",
   "deleteTask",
   "reorderProjects",
   "moveProjectToPiggyBank",

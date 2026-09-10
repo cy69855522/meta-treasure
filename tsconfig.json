@@ -19,7 +19,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@progress/deep-research": ["./package/deep_research/src/index.ts"],
+      "@progress/deep-research/*": ["./package/deep_research/src/*"]
     }
   },
   "include": [

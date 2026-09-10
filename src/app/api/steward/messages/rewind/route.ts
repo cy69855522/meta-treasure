@@ -7,6 +7,7 @@ export async function POST(request: Request) {
     messageId?: string;
     keepCount?: number;
     userOrdinal?: number;
+    keepMessage?: boolean;
   };
 
   if (
@@ -24,6 +25,7 @@ export async function POST(request: Request) {
       typeof body.userOrdinal === "number" && body.userOrdinal >= 0
         ? Math.floor(body.userOrdinal)
         : undefined,
+    keepMessage: body.keepMessage === true,
   });
 
   return Response.json(result);

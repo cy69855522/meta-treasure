@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { getSettings } from "@/lib/settings";
 import { themeBootScript } from "@/lib/theme-boot";
@@ -20,6 +20,12 @@ export const metadata: Metadata = {
   title: "Progress · 无压多项目管理",
   description:
     "个人多项目无压管理：Inbox + Now/Next/Later，服务 3D Infra / AI 漫剧 / AI 选品",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export const dynamic = "force-dynamic";

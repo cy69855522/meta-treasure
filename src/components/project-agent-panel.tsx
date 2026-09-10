@@ -6,25 +6,24 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
   type UIMessage,
 } from "ai";
-import {
-  LoaderCircle,
-  MessageSquare,
-  NotebookPen,
-  SendHorizontal,
-  X,
-} from "lucide-react";
+import { LoaderCircle, MessageSquare, NotebookPen, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AgentToolApprovalCard,
   isAgentToolPart,
+  rejectPendingApprovalsInMessages,
 } from "@/components/agent-tool-approval";
+import { ChatComposer } from "@/components/chat-composer";
 import { ChatMarkdown } from "@/components/chat-markdown";
+import { useAgentChrome } from "@/components/agent-chrome";
 import { MemoryNotesStrip } from "@/components/memory-notes-strip";
+import { MessageRetryButton } from "@/components/message-retry-button";
 import { MessageRewindButton } from "@/components/message-rewind-button";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { AGENT_PROMPT_MESSAGE_LIMIT } from "@/lib/constants";
+import { useStickToBottomScroll } from "@/hooks/use-stick-to-bottom-scroll";
+import { useLoadOlderMessages } from "@/hooks/use-load-older-messages";
+import { AGENT_PROMPT_MESSAGE_LIMIT, CHAT_HISTORY_PAGE_SIZE } from "@/lib/constants";
 import type { AgentMemoryNote, AgentMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +47,7 @@ type Props = {
   projectColor: string;
   projectDescription: string;
   initialMessages: AgentMessage[];
+  initialHasMore?: boolean;
   initialNotes: AgentMemoryNote[];
   children: React.ReactNode;
 };
@@ -58,17 +58,23 @@ export function ProjectAgentPanel({
   projectColor,
   projectDescription,
   initialMessages,
+  initialHasMore = false,
   initialNotes,
   children,
 }: Props) {
   const router = useRouter();
+  const { headerVisible, setAgentSessionActive } = useAgentChrome();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"chat" | "notes">("chat");
-  const [input, setInput] = useState("");
   const [notes, setNotes] = useState(initialNotes);
   const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [hasMoreHistory, setHasMoreHistory] = useState(initialHasMore);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setAgentSessionActive(open);
+    return () => setAgentSessionActive(false);
+  }, [open, setAgentSessionActive]);
 
   const transport = useMemo(
     () =>
@@ -82,6 +88,7 @@ export function ProjectAgentPanel({
     messages,
     setMessages,
     sendMessage,
+    regenerate,
     status,
     error,
     clearError,
@@ -143,8 +150,12 @@ export function ProjectAgentPanel({
           } | null;
           throw new Error(data?.error || "撤回失败");
         }
-        const data = (await res.json()) as { messages: AgentMessage[] };
+        const data = (await res.json()) as {
+          messages: AgentMessage[];
+          hasMore?: boolean;
+        };
         setMessages(toUIMessages(data.messages));
+        setHasMoreHistory(Boolean(data.hasMore));
       } catch (err) {
         console.error(err);
         window.alert(err instanceof Error ? err.message : "撤回失败");
@@ -155,13 +166,96 @@ export function ProjectAgentPanel({
     [messages, projectId, clearError, stop, setMessages],
   );
 
+  const retryFromMessage = useCallback(
+    async (index: number) => {
+      const target = messages[index];
+      if (!target || target.role !== "user") return;
+      const userOrdinal =
+        messages.slice(0, index + 1).filter((m) => m.role === "user").length -
+        1;
+      setRewinding(true);
+      clearError();
+      stop();
+      try {
+        const res = await fetch(
+          `/api/projects/${projectId}/agent/messages/rewind`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messageId: target.id,
+              keepCount: index + 1,
+              userOrdinal,
+              keepMessage: true,
+            }),
+          },
+        );
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(data?.error || "重试失败");
+        }
+        const data = (await res.json()) as {
+          messages: AgentMessage[];
+          hasMore?: boolean;
+        };
+        const next = toUIMessages(data.messages);
+        setMessages(rejectPendingApprovalsInMessages(next));
+        setHasMoreHistory(Boolean(data.hasMore));
+        await regenerate({ messageId: target.id });
+      } catch (err) {
+        console.error(err);
+        window.alert(err instanceof Error ? err.message : "重试失败");
+      } finally {
+        setRewinding(false);
+      }
+    },
+    [messages, projectId, clearError, stop, setMessages, regenerate],
+  );
+
   const busy = status === "submitted" || status === "streaming" || rewinding;
   const thinkingLabel = statusLabel(status);
+  const lastAssistantText =
+    [...messages].reverse().find((m) => m.role === "assistant")?.parts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("") ?? "";
+  const {
+    scrollRef,
+    onScroll: onStickScroll,
+    pinToBottom,
+  } = useStickToBottomScroll({
+    enabled: open && tab === "chat",
+    streaming: status === "streaming" || status === "submitted",
+    contentKey: `${messages.length}:${status}:${lastAssistantText.length}`,
+  });
 
-  useEffect(() => {
-    if (!open || tab !== "chat") return;
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, open, tab, status]);
+  const fetchOlderAgentMessages = useCallback(
+    async (beforeId: string) => {
+      const res = await fetch(
+        `/api/projects/${projectId}/agent/messages?before=${encodeURIComponent(beforeId)}&limit=${CHAT_HISTORY_PAGE_SIZE}`,
+      );
+      if (!res.ok) throw new Error("加载更早消息失败");
+      return (await res.json()) as {
+        messages: AgentMessage[];
+        hasMore: boolean;
+      };
+    },
+    [projectId],
+  );
+
+  const { loadingOlder, onScroll } = useLoadOlderMessages({
+    enabled: open && tab === "chat",
+    hasMore: hasMoreHistory,
+    setHasMore: setHasMoreHistory,
+    messages,
+    setMessages,
+    toUIMessages,
+    fetchOlder: fetchOlderAgentMessages,
+    scrollRef,
+    onScrollBase: onStickScroll,
+  });
 
   useEffect(() => {
     if (!open || tab !== "chat") return;
@@ -208,13 +302,14 @@ export function ProjectAgentPanel({
     setNotes((prev) => prev.filter((n) => n.id !== noteId));
   }
 
-  function submitChat(e?: React.FormEvent) {
-    e?.preventDefault();
-    const text = input.trim();
+  function submitChat(text: string) {
     if (!text || busy) return;
     clearError();
-    sendMessage({ text });
-    setInput("");
+    pinToBottom();
+    // Sending a new turn without clicking 拒绝 must deny pending tools,
+    // otherwise convertToModelMessages throws MissingToolResultsError.
+    setMessages((prev) => rejectPendingApprovalsInMessages(prev));
+    void sendMessage({ text });
   }
 
   function openChat() {
@@ -265,7 +360,12 @@ export function ProjectAgentPanel({
           aria-label={`${projectName} 项目顾问`}
           className="absolute inset-0 z-20 flex flex-col bg-background"
         >
-          <header className="flex shrink-0 items-start justify-between gap-3 border-b border-border px-6 py-4">
+          <header
+            className={cn(
+              "shrink-0 items-start justify-between gap-3 border-b border-border px-6 py-4",
+              headerVisible ? "flex" : "hidden md:flex",
+            )}
+          >
             <div className="min-w-0">
               <div className="mb-1 flex items-center gap-2">
                 <span
@@ -310,11 +410,43 @@ export function ProjectAgentPanel({
               <NotebookPen />
               长期笔记
             </Button>
+            {/* Keep close reachable when the title header is collapsed on mobile. */}
+            {!headerVisible ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="ml-auto md:hidden"
+                onClick={() => setOpen(false)}
+                aria-label="关闭顾问"
+              >
+                <X />
+              </Button>
+            ) : null}
           </div>
 
           {tab === "chat" ? (
             <div className="flex min-h-0 flex-1 flex-col">
-              <div className="mx-auto min-h-0 w-full max-w-6xl flex-1 space-y-4 overflow-y-auto px-6 py-5 md:px-10">
+              <div
+                ref={scrollRef}
+                onScroll={onScroll}
+                className="mx-auto min-h-0 w-full max-w-6xl flex-1 space-y-4 overflow-y-auto px-6 py-5 md:px-10"
+              >
+                {loadingOlder ? (
+                  <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                    <LoaderCircle className="size-3.5 animate-spin" />
+                    加载更早消息…
+                  </div>
+                ) : hasMoreHistory ? (
+                  <p className="text-center text-xs text-muted-foreground">
+                    上滑加载更早消息
+                  </p>
+                ) : messages.length > 0 ? (
+                  <p className="text-center text-xs text-muted-foreground">
+                    已到最早消息
+                  </p>
+                ) : null}
+
                 {messages.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
                     还没有对话。问问进度、想法或迷茫点；若顾问提议改笔记/任务，会先给你预览确认。
@@ -352,10 +484,10 @@ export function ProjectAgentPanel({
                     >
                       <div
                         className={cn(
-                          "max-w-[min(92%,52rem)] rounded-2xl px-4 py-3 shadow-sm",
+                          "rounded-2xl px-4 py-3 shadow-sm",
                           isUser
-                            ? "rounded-br-md bg-primary text-primary-foreground"
-                            : "rounded-bl-md bg-muted text-foreground",
+                            ? "max-w-[min(92%,52rem)] rounded-br-md bg-primary text-primary-foreground"
+                            : "w-full max-w-[min(92%,52rem)] rounded-bl-md bg-muted text-foreground",
                         )}
                       >
                         {!isUser ? (
@@ -372,6 +504,7 @@ export function ProjectAgentPanel({
                               <ChatMarkdown
                                 content={reasoning}
                                 variant="assistant"
+                                streaming={streamingHere}
                               />
                             </div>
                           </details>
@@ -382,10 +515,14 @@ export function ProjectAgentPanel({
                               <ChatMarkdown
                                 content={text}
                                 variant={isUser ? "user" : "assistant"}
+                                streaming={streamingHere}
                               />
                             ) : null}
                             {streamingHere ? (
-                              <span className="ml-0.5 inline-block h-4 w-1 animate-pulse bg-foreground/70 align-middle" />
+                              <span
+                                aria-hidden
+                                className="ml-0.5 inline-block h-[1.05em] w-0.5 animate-pulse bg-foreground/70 align-[-0.1em]"
+                              />
                             ) : null}
                           </div>
                         ) : null}
@@ -406,7 +543,14 @@ export function ProjectAgentPanel({
                             ))
                           : null}
                         {toolParts.length === 0 ? (
-                          <div className="mt-2 flex justify-end">
+                          <div className="mt-2 flex justify-end gap-0.5">
+                            {isUser ? (
+                              <MessageRetryButton
+                                disabled={busy}
+                                onRetry={() => retryFromMessage(index)}
+                                tone="onPrimary"
+                              />
+                            ) : null}
                             <MessageRewindButton
                               disabled={busy}
                               onRewind={() => rewindToMessage(index)}
@@ -421,7 +565,7 @@ export function ProjectAgentPanel({
 
                 {status === "submitted" ? (
                   <div className="flex justify-start">
-                    <div className="flex items-center gap-2 rounded-2xl rounded-bl-md bg-muted px-4 py-3 text-sm text-muted-foreground">
+                    <div className="flex w-full max-w-[min(92%,52rem)] items-center gap-2 rounded-2xl rounded-bl-md bg-muted px-4 py-3 text-sm text-muted-foreground">
                       <LoaderCircle className="size-3.5 animate-spin" />
                       模型推理中…
                     </div>
@@ -433,7 +577,6 @@ export function ProjectAgentPanel({
                     {error.message}
                   </p>
                 ) : null}
-                <div ref={bottomRef} />
               </div>
 
               {thinkingLabel ? (
@@ -452,43 +595,14 @@ export function ProjectAgentPanel({
                 </div>
               ) : null}
 
-              <form
+              <ChatComposer
+                id="project-agent-chat-input"
+                name="project-agent-chat-input"
+                placeholder="发送消息…"
+                disabled={busy}
+                textareaRef={inputRef}
                 onSubmit={submitChat}
-                className="border-t border-border px-6 py-4 md:px-10"
-              >
-                <div className="mx-auto flex max-w-6xl items-start gap-3">
-                  <Textarea
-                    id="project-agent-chat-input"
-                    name="project-agent-chat-input"
-                    ref={inputRef}
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="发送消息…"
-                    className="min-h-28 flex-1 resize-y text-base leading-relaxed md:min-h-32"
-                    disabled={busy}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        submitChat();
-                      }
-                    }}
-                  />
-                  <Button
-                    type="submit"
-                    size="lg"
-                    className="h-12 shrink-0 px-4"
-                    disabled={busy || !input.trim()}
-                    aria-label="发送"
-                  >
-                    {busy ? (
-                      <LoaderCircle className="animate-spin" />
-                    ) : (
-                      <SendHorizontal />
-                    )}
-                    发送
-                  </Button>
-                </div>
-              </form>
+              />
             </div>
           ) : (
             <MemoryNotesStrip

@@ -63,6 +63,7 @@ const TOOL_LABELS: Record<AgentToolName, string> = {
   deleteMemoryNote: "删除长期笔记",
   createTask: "创建任务",
   updateTask: "更新任务",
+  completeTask: "完成任务",
   deleteTask: "删除任务",
   reorderProjects: "调整项目顺序",
   moveProjectToPiggyBank: "移入项目储蓄罐",
@@ -173,6 +174,7 @@ type TaskInputUpdate = {
   projectId?: string | null;
 };
 type TaskInputDelete = { taskId: string };
+type TaskInputComplete = { taskId: string };
 
 function previewCreateNote(input: NoteInputCreate): ActionPreview {
   const diffs: ActionDiff[] = [];
@@ -458,6 +460,74 @@ function previewDeleteTask(
   };
 }
 
+function previewCompleteTask(
+  scope: AgentToolScope,
+  fixedProjectId: string | undefined,
+  input: TaskInputComplete,
+): ActionPreview {
+  const task = getTask(input.taskId);
+  if (!task) {
+    return {
+      toolName: "completeTask",
+      actionLabel: TOOL_LABELS.completeTask,
+      summary: `找不到任务 ${input.taskId}`,
+      diffs: [],
+      risk: "low",
+      affects: "tasks",
+    };
+  }
+
+  if (
+    scope === "project" &&
+    fixedProjectId &&
+    task.projectId !== fixedProjectId &&
+    task.projectId !== null
+  ) {
+    return {
+      toolName: "completeTask",
+      actionLabel: TOOL_LABELS.completeTask,
+      summary: "该任务不属于当前项目",
+      diffs: [],
+      risk: "low",
+      affects: "tasks",
+    };
+  }
+
+  if (task.lane === "done") {
+    return {
+      toolName: "completeTask",
+      actionLabel: TOOL_LABELS.completeTask,
+      summary: `任务「${display(task.title)}」已在 Done，无需再完成`,
+      diffs: [
+        { field: "泳道", before: laneLabel("done"), after: laneLabel("done") },
+      ],
+      risk: "low",
+      affects: "tasks",
+    };
+  }
+
+  return {
+    toolName: "completeTask",
+    actionLabel: TOOL_LABELS.completeTask,
+    summary: `将完成任务「${display(task.title)}」并移入历史`,
+    diffs: [
+      {
+        field: "标题",
+        before: display(task.title),
+        after: display(task.title),
+      },
+      { field: "泳道", before: laneLabel(task.lane), after: laneLabel("done") },
+      {
+        field: "项目",
+        before: projectName(task.projectId),
+        after: projectName(task.projectId),
+      },
+    ],
+    risk: "low",
+    affects: "tasks",
+  };
+}
+
 export function buildActionPreview(input: {
   scope: AgentToolScope;
   projectId?: string;
@@ -489,6 +559,8 @@ export function buildActionPreview(input: {
       return previewCreateTask(scope, projectId, raw as TaskInputCreate);
     case "updateTask":
       return previewUpdateTask(scope, projectId, raw as TaskInputUpdate);
+    case "completeTask":
+      return previewCompleteTask(scope, projectId, raw as TaskInputComplete);
     case "deleteTask":
       return previewDeleteTask(scope, projectId, raw as TaskInputDelete);
     case "reorderProjects":
@@ -885,8 +957,31 @@ function previewPiggyMove(
   };
 }
 
+function skillReadTools(): ToolSet {
+  return {
+    getSkill: tool({
+      description:
+        "按需加载一条 Skill 的完整正文（含 body）。当用户问题与技能库目录中某条 description 相关时先调用再回答；只读，无需用户确认。",
+      inputSchema: z.object({
+        skillId: z.string().describe("技能 id（来自技能库目录快照）"),
+      }),
+      execute: async ({ skillId }) => {
+        const skill = getSkill(skillId);
+        if (!skill) throw new Error("Skill not found");
+        const folder = getSkillFolder(skill.folderId);
+        return {
+          ok: true as const,
+          skill,
+          folderName: folder?.name ?? null,
+        };
+      },
+    }),
+  };
+}
+
 function stewardLibraryTools(): ToolSet {
   return {
+    ...skillReadTools(),
     createSkillFolder: tool({
       description:
         "在技能库新建文件夹。需用户确认后生效。名称不能与已有技能目录重复。",
@@ -931,15 +1026,18 @@ function stewardLibraryTools(): ToolSet {
     }),
     createSkill: tool({
       description:
-        "在指定技能目录下新建 Skill（name / description / markdown 正文）。需用户确认后生效。",
+        "在指定技能目录下新建 Skill。body/description 以用户给出的原文为准，不要擅自套固定 SKILL.md 模板或重写用户要保留的内容。复制时先 getSkill 再原样写入 body。需用户确认后生效。",
       inputSchema: z.object({
         folderId: z.string().describe("技能目录 id"),
-        name: z.string().describe("Skill name（建议 kebab-case）"),
+        name: z.string().describe("Skill 名称（按用户指定；可原样保留）"),
         description: z
           .string()
           .optional()
-          .describe("何时启用该 Skill 的简短说明"),
-        body: z.string().optional().describe("Skill 正文（markdown）"),
+          .describe("何时启用；复制时优先沿用源 description，除非用户另有说明"),
+        body: z
+          .string()
+          .optional()
+          .describe("Skill 正文；用户提供或复制来的原文应完整传入，勿擅自大幅改写"),
       }),
       execute: async ({ folderId, name, description, body }) => {
         const skill = createSkill({ folderId, name, description, body });
@@ -948,13 +1046,13 @@ function stewardLibraryTools(): ToolSet {
     }),
     updateSkill: tool({
       description:
-        "更新已有 Skill 的 name / description / 正文，或移动到其他技能目录。需用户确认后生效。",
+        "更新已有 Skill。只改用户要求改的字段；未提到的字段不要动。复制/微调时不要整篇重写。需用户确认后生效。",
       inputSchema: z.object({
         skillId: z.string().describe("技能 id"),
         folderId: z.string().optional().describe("新目录 id；不传则不变"),
         name: z.string().optional().describe("新 name；不传则不变"),
         description: z.string().optional().describe("新 description；不传则不变"),
-        body: z.string().optional().describe("新正文；不传则不变"),
+        body: z.string().optional().describe("新正文；不传则不变；传入则按用户意图写入"),
       }),
       execute: async ({ skillId, folderId, name, description, body }) => {
         if (!getSkill(skillId)) throw new Error("Skill not found");
@@ -1027,15 +1125,18 @@ function stewardLibraryTools(): ToolSet {
     }),
     createRule: tool({
       description:
-        "在指定规则目录下新建 Rule（持久约束：name / description / markdown 正文）。需用户确认后生效。",
+        "在指定规则目录下新建 Rule。body/description 以用户给出的原文为准，不要擅自套固定模板或重写用户要保留的内容。复制时先 getRule 再原样写入 body。需用户确认后生效。",
       inputSchema: z.object({
         folderId: z.string().describe("规则目录 id"),
-        name: z.string().describe("Rule name（建议 kebab-case）"),
+        name: z.string().describe("Rule 名称（按用户指定；可原样保留）"),
         description: z
           .string()
           .optional()
-          .describe("该 Rule 适用场景的简短说明"),
-        body: z.string().optional().describe("Rule 正文（markdown）"),
+          .describe("适用场景；复制时优先沿用源 description，除非用户另有说明"),
+        body: z
+          .string()
+          .optional()
+          .describe("Rule 正文；用户提供或复制来的原文应完整传入，勿擅自大幅改写"),
       }),
       execute: async ({ folderId, name, description, body }) => {
         const rule = createRule({ folderId, name, description, body });
@@ -1044,13 +1145,13 @@ function stewardLibraryTools(): ToolSet {
     }),
     updateRule: tool({
       description:
-        "更新已有 Rule 的 name / description / 正文，或移动到其他规则目录。需用户确认后生效。",
+        "更新已有 Rule。只改用户要求改的字段；未提到的字段不要动。复制/微调时不要整篇重写。需用户确认后生效。",
       inputSchema: z.object({
         ruleId: z.string().describe("规则 id"),
         folderId: z.string().optional().describe("新目录 id；不传则不变"),
         name: z.string().optional().describe("新 name；不传则不变"),
         description: z.string().optional().describe("新 description；不传则不变"),
-        body: z.string().optional().describe("新正文；不传则不变"),
+        body: z.string().optional().describe("新正文；不传则不变；传入则按用户意图写入"),
       }),
       execute: async ({ ruleId, folderId, name, description, body }) => {
         if (!getRule(ruleId)) throw new Error("Rule not found");
@@ -1076,6 +1177,23 @@ function stewardLibraryTools(): ToolSet {
           ok: true as const,
           deletedRuleId: ruleId,
           name: existing.name,
+        };
+      },
+    }),
+    getRule: tool({
+      description:
+        "读取一条 Rule 的完整内容（含 body）。复制、对照或按原文修改前先调用；只读，无需用户确认。",
+      inputSchema: z.object({
+        ruleId: z.string().describe("规则 id"),
+      }),
+      execute: async ({ ruleId }) => {
+        const rule = getRule(ruleId);
+        if (!rule) throw new Error("Rule not found");
+        const folder = getRuleFolder(rule.folderId);
+        return {
+          ok: true as const,
+          rule,
+          folderName: folder?.name ?? null,
         };
       },
     }),
@@ -1327,6 +1445,31 @@ function taskTools(scope: AgentToolScope, fixedProjectId?: string) {
         return { ok: true as const, task };
       },
     }),
+    completeTask: tool({
+      description:
+        "将任务标记为完成并移入 Done 历史。只需 taskId；比 updateTask 更直接。需用户确认后生效。已是 Done 则视为成功。",
+      inputSchema: z.object({
+        taskId: z.string().describe("要完成的任务 id（来自看板快照）"),
+      }),
+      execute: async ({ taskId }) => {
+        const existing = getTask(taskId);
+        if (!existing) throw new Error("Task not found");
+        if (
+          scope === "project" &&
+          fixedProjectId &&
+          existing.projectId !== fixedProjectId &&
+          existing.projectId !== null
+        ) {
+          throw new Error("Task not in this project");
+        }
+        if (existing.lane === "done") {
+          return { ok: true as const, alreadyDone: true as const, task: existing };
+        }
+        const task = updateTask(taskId, { lane: "done" });
+        if (!task) throw new Error("Failed to complete task");
+        return { ok: true as const, alreadyDone: false as const, task };
+      },
+    }),
     deleteTask: tool({
       description: "删除任务。需用户确认后生效；不可恢复。",
       inputSchema: z.object({
@@ -1358,6 +1501,7 @@ export function buildProjectAgentTools(projectId: string): ToolSet {
   return {
     ...noteTools("project", projectId),
     ...taskTools("project", projectId),
+    ...skillReadTools(),
   };
 }
 
@@ -1371,5 +1515,12 @@ export function buildStewardTools(): ToolSet {
 }
 
 export function agentToolApproval() {
-  return () => "user-approval" as const;
+  /** Read-only library lookups must not pause for confirmation. */
+  const autoRun = new Set(["getSkill", "getRule"]);
+  return ({ toolCall }: { toolCall: { toolName: string } }) => {
+    if (autoRun.has(toolCall.toolName)) {
+      return "not-applicable" as const;
+    }
+    return "user-approval" as const;
+  };
 }

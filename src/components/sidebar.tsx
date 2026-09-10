@@ -24,6 +24,10 @@ import {
   Boxes,
   PanelLeftClose,
   PanelLeft,
+  PanelTop,
+  PanelTopClose,
+  Maximize2,
+  Minimize2,
   Plus,
   Menu,
   X,
@@ -32,11 +36,14 @@ import {
   ScrollText,
   SlidersHorizontal,
   Crown,
+  Wrench,
 } from "lucide-react";
 import type { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useMounted } from "@/hooks/use-mounted";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useFullscreen } from "@/hooks/use-fullscreen";
+import { useAgentChrome } from "@/components/agent-chrome";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -280,6 +287,20 @@ function ProjectNav({
       </div>
 
       <Link
+        href="/toolbox"
+        onClick={onNavigate}
+        className={cn(
+          "flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors",
+          pathname === "/toolbox" || pathname.startsWith("/toolbox/")
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "hover:bg-sidebar-accent/70",
+        )}
+      >
+        <Wrench className="size-4 shrink-0" />
+        {!collapsed ? <span className="flex-1">工具箱</span> : null}
+      </Link>
+
+      <Link
         href="/settings"
         onClick={onNavigate}
         className={cn(
@@ -413,6 +434,8 @@ export function Sidebar({
   const router = useRouter();
   const mounted = useMounted();
   const { matches: isDesktop } = useMediaQuery("(min-width: 768px)");
+  const { headerVisible, toggleHeader, agentSessionActive } = useAgentChrome();
+  const { active: fullscreenActive, toggle: toggleFullscreen } = useFullscreen();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -611,66 +634,88 @@ export function Sidebar({
           type="button"
           onClick={() => setMobileOpen(true)}
           aria-label="打开侧边栏"
-          className="inline-flex size-10 items-center justify-center rounded-lg hover:bg-muted [&_svg]:pointer-events-none"
+          className="inline-flex size-10 touch-manipulation items-center justify-center rounded-lg hover:bg-muted [&_svg]:pointer-events-none"
         >
           <Menu className="size-5" />
         </button>
         <p className="text-sm font-semibold">Progress</p>
+        {agentSessionActive ? (
+          <button
+            type="button"
+            onClick={toggleHeader}
+            aria-label={headerVisible ? "隐藏顾问标题栏" : "显示顾问标题栏"}
+            aria-pressed={headerVisible}
+            title={headerVisible ? "隐藏顾问标题栏" : "显示顾问标题栏"}
+            className="ml-auto inline-flex size-10 touch-manipulation items-center justify-center rounded-lg hover:bg-muted [&_svg]:pointer-events-none"
+          >
+            {headerVisible ? (
+              <PanelTopClose className="size-5" />
+            ) : (
+              <PanelTop className="size-5" />
+            )}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => void toggleFullscreen()}
+          aria-label={fullscreenActive ? "退出全屏" : "全屏"}
+          aria-pressed={fullscreenActive}
+          title={fullscreenActive ? "退出全屏" : "全屏"}
+          className={cn(
+            "inline-flex size-10 touch-manipulation items-center justify-center rounded-lg hover:bg-muted [&_svg]:pointer-events-none",
+            !agentSessionActive && "ml-auto",
+          )}
+        >
+          {fullscreenActive ? (
+            <Minimize2 className="size-5" />
+          ) : (
+            <Maximize2 className="size-5" />
+          )}
+        </button>
         <button
           type="button"
           onClick={onOpenCapture}
           aria-label="打开快速捕捉"
-          className="ml-auto inline-flex size-10 items-center justify-center rounded-lg hover:bg-muted [&_svg]:pointer-events-none"
+          className="inline-flex size-10 touch-manipulation items-center justify-center rounded-lg hover:bg-muted [&_svg]:pointer-events-none"
         >
           <Plus className="size-5" />
         </button>
       </header>
 
-      {/* Mobile drawer */}
-      <div
-        data-mobile-drawer=""
-        className={cn(
-          "fixed inset-0 z-[100] md:hidden",
-          mobileOpen ? "pointer-events-auto" : "pointer-events-none",
-        )}
-      >
-        <button
-          type="button"
-          aria-label="关闭侧边栏"
-          className={cn(
-            "absolute inset-0 bg-black/40 transition-opacity",
-            mobileOpen ? "opacity-100" : "opacity-0",
-          )}
-          onClick={() => setMobileOpen(false)}
-        />
-        <aside
-          className={cn(
-            "absolute inset-y-0 left-0 flex w-[min(18rem,86vw)] flex-col border-r bg-sidebar text-sidebar-foreground shadow-xl transition-transform",
-            mobileOpen ? "translate-x-0" : "-translate-x-full",
-          )}
-        >
-          <div className="flex items-center justify-between gap-2 border-b px-3 py-3">
-            <div>
-              <p className="text-sm font-semibold tracking-tight">Progress</p>
-              <p className="text-xs text-muted-foreground">无压多项目路线图</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setMobileOpen(false)}
-              aria-label="关闭侧边栏"
-              className="inline-flex size-9 items-center justify-center rounded-lg hover:bg-sidebar-accent [&_svg]:pointer-events-none"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-          <ProjectNav
-            {...mobileNavProps}
-            collapsed={false}
-            dndId="sidebar-projects-mobile"
-            onNavigate={() => setMobileOpen(false)}
+      {/* Mobile drawer: unmount when closed — a closed `fixed inset-0` layer
+          still steals taps on some mobile browsers despite pointer-events-none. */}
+      {mobileOpen ? (
+        <div data-mobile-drawer="" className="fixed inset-0 z-[100] md:hidden">
+          <button
+            type="button"
+            aria-label="关闭侧边栏"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setMobileOpen(false)}
           />
-        </aside>
-      </div>
+          <aside className="absolute inset-y-0 left-0 flex w-[min(18rem,86vw)] flex-col border-r bg-sidebar text-sidebar-foreground shadow-xl">
+            <div className="flex items-center justify-between gap-2 border-b px-3 py-3">
+              <div>
+                <p className="text-sm font-semibold tracking-tight">Progress</p>
+                <p className="text-xs text-muted-foreground">无压多项目路线图</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileOpen(false)}
+                aria-label="关闭侧边栏"
+                className="inline-flex size-9 items-center justify-center rounded-lg hover:bg-sidebar-accent [&_svg]:pointer-events-none"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <ProjectNav
+              {...mobileNavProps}
+              collapsed={false}
+              dndId="sidebar-projects-mobile"
+              onNavigate={() => setMobileOpen(false)}
+            />
+          </aside>
+        </div>
+      ) : null}
 
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Desktop sidebar */}
