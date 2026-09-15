@@ -24,6 +24,7 @@ export async function PATCH(request: Request, { params }: Params) {
     description?: string;
     body?: string;
     folderId?: string;
+    usageMode?: string;
   };
 
   try {
@@ -32,6 +33,10 @@ export async function PATCH(request: Request, { params }: Params) {
       description: body.description,
       body: body.body,
       folderId: body.folderId,
+      usageMode:
+        body.usageMode === "required" || body.usageMode === "on_demand"
+          ? body.usageMode
+          : undefined,
     });
     return Response.json({ skill });
   } catch (error) {

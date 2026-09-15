@@ -1,22 +1,9 @@
 import "server-only";
-import { createOpenAI } from "@ai-sdk/openai";
 import {
-  convertToModelMessages,
-  isStepCount,
-  streamText,
-  type UIMessage,
-} from "ai";
-import {
-  agentToolApproval,
-  buildProjectAgentTools,
-} from "@/lib/agent-tools";
-import {
-  AGENT_PROMPT_MESSAGE_LIMIT,
   STEWARD_HANDOFF_MESSAGE_MAX_CHARS,
   STEWARD_HANDOFF_ROUNDS,
 } from "@/lib/constants";
 import {
-  createAgentMessage,
   ensureProjectAgent,
   getProject,
   listAgentMemoryNotes,
@@ -29,25 +16,6 @@ import {
 } from "@/lib/library-catalog";
 import { LANE_LABELS, NOW_WIP_LIMIT, type Lane, type Task } from "@/lib/types";
 
-function requireEnv(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing required env: ${name}`);
-  }
-  return value;
-}
-
-export function createProjectLlm() {
-  const openai = createOpenAI({
-    apiKey: requireEnv("BBOLUO_API_KEY"),
-    baseURL: requireEnv("BBOLUO_BASE_URL"),
-    name: "bboluo",
-  });
-  // Use Chat Completions — many OpenAI-compatible gateways do not support /responses.
-  const modelId = process.env.BBOLUO_MODEL?.trim() || "[L]gemini-2.5-flash";
-  return openai.chat(modelId);
-}
-
 function formatLaneTasks(
   lane: Extract<Lane, "now" | "next" | "later" | "done">,
   tasks: Task[],
@@ -56,7 +24,6 @@ function formatLaneTasks(
   if (tasks.length === 0) return `- ${label}: （空）`;
   return `- ${label}:\n${tasks.map((t) => `  - ${t.title} (id=${t.id})`).join("\n")}`;
 }
-
 export function buildBoardSnapshot(projectId: string): string {
   const tasks = listTasks({ projectId });
   const byLane = (lane: Lane) =>
@@ -120,6 +87,10 @@ export function buildProjectAgentSystemPrompt(projectId: string): string {
     "你是该项目的顾问（Project Agent）。",
     "你可以分析进度、讨论想法、在用户迷茫时给方向。",
     "若要增删改长期笔记或任务，必须调用对应 function tool；系统会先让用户预览确认，通过后才会真正落库。",
+    "你是只读代码顾问。可以搜索和读取已绑定项目中的代码文件，用代码事实回答问题。",
+    "禁止修改、创建或删除项目代码文件；禁止安装依赖、执行构建或测试、启动服务以及运行会改变项目或系统状态的命令。",
+    "用户要求你写代码或执行命令时，说明当前 Agent 仅提供分析与代码阅读，并给出可供用户自行实施的建议。",
+    "搜索代码时优先使用 rg 或 rg --files，并限定到相关目录和文件类型。禁止使用 grep -r .、find 扫描整个仓库或读取 .next、node_modules、dist、build、.git 等生成/依赖目录；命令输出应保持聚焦，必要时限制行数。",
     "要把任务标为完成时，优先调用 completeTask（移入 Done），不要用 deleteTask。",
     "在用户确认前，不要声称已经改过看板或笔记。",
     "若用户拒绝某次 tool 执行，不要重试同一操作；告知未应用即可。",
@@ -150,79 +121,4 @@ export function buildProjectAgentSystemPrompt(projectId: string): string {
   ]
     .filter(Boolean)
     .join("\n");
-}
-
-function extractLastUserText(
-  messages: Array<{
-    role: string;
-    parts?: Array<{ type: string; text?: string }>;
-    content?: string;
-  }>,
-): string {
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  if (!lastUser) return "";
-  if (typeof lastUser.content === "string" && lastUser.content.trim()) {
-    return lastUser.content.trim();
-  }
-  const text = (lastUser.parts ?? [])
-    .filter((p) => p.type === "text" && typeof p.text === "string")
-    .map((p) => p.text!)
-    .join("")
-    .trim();
-  return text;
-}
-
-export async function streamProjectAgentChat(input: {
-  projectId: string;
-  uiMessages: UIMessage[];
-  abortSignal?: AbortSignal;
-  /** AI SDK send trigger — regenerate must not re-persist the user turn. */
-  trigger?: "submit-message" | "regenerate-message";
-}) {
-  const project = getProject(input.projectId);
-  if (!project) {
-    throw new Error("Project not found");
-  }
-
-  ensureProjectAgent(input.projectId);
-
-  const last = input.uiMessages.at(-1);
-  const isContinuation = last?.role === "assistant";
-  const isRegenerate = input.trigger === "regenerate-message";
-
-  if (!isContinuation) {
-    const userText = extractLastUserText(input.uiMessages);
-    if (!userText) {
-      throw new Error("Empty user message");
-    }
-    if (!isRegenerate) {
-      createAgentMessage({
-        projectId: input.projectId,
-        role: "user",
-        content: userText,
-      });
-    }
-  }
-
-  const tools = buildProjectAgentTools(input.projectId);
-  const recent = input.uiMessages.slice(-AGENT_PROMPT_MESSAGE_LIMIT);
-  const messages = await convertToModelMessages(recent, { tools });
-
-  return streamText({
-    model: createProjectLlm(),
-    system: buildProjectAgentSystemPrompt(input.projectId),
-    messages,
-    tools,
-    toolApproval: agentToolApproval(),
-    stopWhen: isStepCount(8),
-    abortSignal: input.abortSignal,
-    onFinish: ({ text }) => {
-      if (!text.trim()) return;
-      createAgentMessage({
-        projectId: input.projectId,
-        role: "assistant",
-        content: text,
-      });
-    },
-  });
 }

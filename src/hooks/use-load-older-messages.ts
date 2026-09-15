@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { UIMessage } from "ai";
+import type { UIMessage } from "@/lib/codex-types";
 
 const LOAD_TOP_PX = 48;
 

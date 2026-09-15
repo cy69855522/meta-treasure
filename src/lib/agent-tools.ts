@@ -1,5 +1,5 @@
 import "server-only";
-import { tool, type ToolSet } from "ai";
+import { tool, type ToolSet } from "@/lib/codex-tool";
 import { z } from "zod";
 import {
   type ActionDiff,
@@ -609,6 +609,7 @@ type LibraryItemCreateInput = {
   name?: string;
   description?: string;
   body?: string;
+  usageMode?: string;
 };
 
 type LibraryItemUpdateInput = {
@@ -618,6 +619,7 @@ type LibraryItemUpdateInput = {
   name?: string;
   description?: string;
   body?: string;
+  usageMode?: string;
 };
 
 function libraryLabels(kind: LibraryKind) {
@@ -767,6 +769,12 @@ function previewCreateLibraryItem(
   pushDiff(diffs, "目录", null, display(folder?.name ?? input.folderId));
   pushDiff(diffs, "name", null, display(input.name));
   pushDiff(diffs, "description", null, clipText(input.description));
+  pushDiff(
+    diffs,
+    "使用类型",
+    null,
+    input.usageMode === "required" ? "必须使用" : "按需使用",
+  );
   pushDiff(diffs, "正文", null, clipText(input.body));
 
   return {
@@ -836,6 +844,15 @@ function previewUpdateLibraryItem(
       clipText(item.description),
       clipText(input.description),
     );
+  }
+  if (input.usageMode !== undefined) {
+    const before =
+      "usageMode" in item && item.usageMode === "required"
+        ? "必须使用"
+        : "按需使用";
+    const after =
+      input.usageMode === "required" ? "必须使用" : "按需使用";
+    pushDiff(diffs, "使用类型", before, after);
   }
   if (input.body !== undefined) {
     pushDiff(diffs, "正文", clipText(item.body), clipText(input.body));
@@ -1026,7 +1043,7 @@ function stewardLibraryTools(): ToolSet {
     }),
     createSkill: tool({
       description:
-        "在指定技能目录下新建 Skill。body/description 以用户给出的原文为准，不要擅自套固定 SKILL.md 模板或重写用户要保留的内容。复制时先 getSkill 再原样写入 body。需用户确认后生效。",
+        "在指定技能目录下新建 Skill。body/description 以用户给出的原文为准，不要擅自套固定 SKILL.md 模板或重写用户要保留的内容。复制时先 getSkill 再原样写入 body。usageMode：required=必须使用（每轮自动注入），on_demand=按需使用（默认）。需用户确认后生效。",
       inputSchema: z.object({
         folderId: z.string().describe("技能目录 id"),
         name: z.string().describe("Skill 名称（按用户指定；可原样保留）"),
@@ -1038,29 +1055,51 @@ function stewardLibraryTools(): ToolSet {
           .string()
           .optional()
           .describe("Skill 正文；用户提供或复制来的原文应完整传入，勿擅自大幅改写"),
+        usageMode: z
+          .enum(["required", "on_demand"])
+          .optional()
+          .describe("使用类型：required=必须使用，on_demand=按需使用（默认）"),
       }),
-      execute: async ({ folderId, name, description, body }) => {
-        const skill = createSkill({ folderId, name, description, body });
+      execute: async ({ folderId, name, description, body, usageMode }) => {
+        const skill = createSkill({
+          folderId,
+          name,
+          description,
+          body,
+          usageMode,
+        });
         return { ok: true as const, skill };
       },
     }),
     updateSkill: tool({
       description:
-        "更新已有 Skill。只改用户要求改的字段；未提到的字段不要动。复制/微调时不要整篇重写。需用户确认后生效。",
+        "更新已有 Skill。只改用户要求改的字段；未提到的字段不要动。复制/微调时不要整篇重写。usageMode：required=必须使用，on_demand=按需使用。需用户确认后生效。",
       inputSchema: z.object({
         skillId: z.string().describe("技能 id"),
         folderId: z.string().optional().describe("新目录 id；不传则不变"),
         name: z.string().optional().describe("新 name；不传则不变"),
         description: z.string().optional().describe("新 description；不传则不变"),
         body: z.string().optional().describe("新正文；不传则不变；传入则按用户意图写入"),
+        usageMode: z
+          .enum(["required", "on_demand"])
+          .optional()
+          .describe("使用类型；不传则不变"),
       }),
-      execute: async ({ skillId, folderId, name, description, body }) => {
+      execute: async ({
+        skillId,
+        folderId,
+        name,
+        description,
+        body,
+        usageMode,
+      }) => {
         if (!getSkill(skillId)) throw new Error("Skill not found");
         const skill = updateSkill(skillId, {
           folderId,
           name,
           description,
           body,
+          usageMode,
         });
         return { ok: true as const, skill };
       },
@@ -1125,7 +1164,7 @@ function stewardLibraryTools(): ToolSet {
     }),
     createRule: tool({
       description:
-        "在指定规则目录下新建 Rule。body/description 以用户给出的原文为准，不要擅自套固定模板或重写用户要保留的内容。复制时先 getRule 再原样写入 body。需用户确认后生效。",
+        "在指定规则目录下新建 Rule。body/description 以用户给出的原文为准，不要擅自套固定模板或重写用户要保留的内容。复制时先 getRule 再原样写入 body。usageMode：required=必须使用（每轮自动注入），on_demand=按需使用（默认）。需用户确认后生效。",
       inputSchema: z.object({
         folderId: z.string().describe("规则目录 id"),
         name: z.string().describe("Rule 名称（按用户指定；可原样保留）"),
@@ -1137,29 +1176,51 @@ function stewardLibraryTools(): ToolSet {
           .string()
           .optional()
           .describe("Rule 正文；用户提供或复制来的原文应完整传入，勿擅自大幅改写"),
+        usageMode: z
+          .enum(["required", "on_demand"])
+          .optional()
+          .describe("使用类型：required=必须使用，on_demand=按需使用（默认）"),
       }),
-      execute: async ({ folderId, name, description, body }) => {
-        const rule = createRule({ folderId, name, description, body });
+      execute: async ({ folderId, name, description, body, usageMode }) => {
+        const rule = createRule({
+          folderId,
+          name,
+          description,
+          body,
+          usageMode,
+        });
         return { ok: true as const, rule };
       },
     }),
     updateRule: tool({
       description:
-        "更新已有 Rule。只改用户要求改的字段；未提到的字段不要动。复制/微调时不要整篇重写。需用户确认后生效。",
+        "更新已有 Rule。只改用户要求改的字段；未提到的字段不要动。复制/微调时不要整篇重写。usageMode：required=必须使用，on_demand=按需使用。需用户确认后生效。",
       inputSchema: z.object({
         ruleId: z.string().describe("规则 id"),
         folderId: z.string().optional().describe("新目录 id；不传则不变"),
         name: z.string().optional().describe("新 name；不传则不变"),
         description: z.string().optional().describe("新 description；不传则不变"),
         body: z.string().optional().describe("新正文；不传则不变；传入则按用户意图写入"),
+        usageMode: z
+          .enum(["required", "on_demand"])
+          .optional()
+          .describe("使用类型；不传则不变"),
       }),
-      execute: async ({ ruleId, folderId, name, description, body }) => {
+      execute: async ({
+        ruleId,
+        folderId,
+        name,
+        description,
+        body,
+        usageMode,
+      }) => {
         if (!getRule(ruleId)) throw new Error("Rule not found");
         const rule = updateRule(ruleId, {
           folderId,
           name,
           description,
           body,
+          usageMode,
         });
         return { ok: true as const, rule };
       },
@@ -1329,7 +1390,7 @@ function noteTools(scope: AgentToolScope, projectId?: string) {
   };
 }
 
-/** Gemini rejects JSON Schema `nullable: true` / type null — use empty string instead. */
+/** Empty strings represent omitted project selection in existing tool contracts. */
 function normalizeProjectId(value: string | undefined): string | null | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
@@ -1511,16 +1572,5 @@ export function buildStewardTools(): ToolSet {
     ...taskTools("steward"),
     ...stewardProjectTools(),
     ...stewardLibraryTools(),
-  };
-}
-
-export function agentToolApproval() {
-  /** Read-only library lookups must not pause for confirmation. */
-  const autoRun = new Set(["getSkill", "getRule"]);
-  return ({ toolCall }: { toolCall: { toolName: string } }) => {
-    if (autoRun.has(toolCall.toolName)) {
-      return "not-applicable" as const;
-    }
-    return "user-approval" as const;
   };
 }

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ArrowLeft, FileText, Pencil, Plus, Trash2 } from "lucide-react";
-import type { Rule, RuleFolder } from "@/lib/types";
+import type { LibraryUsageMode, Rule, RuleFolder } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ChatMarkdown } from "@/components/chat-markdown";
+import { cn } from "@/lib/utils";
 
 const DEFAULT_BODY = `# Rule Title
 
@@ -28,6 +29,11 @@ const DEFAULT_BODY = `# Rule Title
 
 Brief good vs bad examples when helpful.
 `;
+
+const USAGE_MODE_LABEL: Record<LibraryUsageMode, string> = {
+  required: "必须使用",
+  on_demand: "按需使用",
+};
 
 export function RuleFolderView({
   folder,
@@ -44,6 +50,7 @@ export function RuleFolderView({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [body, setBody] = useState("");
+  const [usageMode, setUsageMode] = useState<LibraryUsageMode>("on_demand");
   const [saving, setSaving] = useState(false);
 
   function openCreate() {
@@ -51,6 +58,7 @@ export function RuleFolderView({
     setName("");
     setDescription("");
     setBody(DEFAULT_BODY);
+    setUsageMode("on_demand");
     setPreview(false);
     setEditorOpen(true);
   }
@@ -60,6 +68,7 @@ export function RuleFolderView({
     setName(rule.name);
     setDescription(rule.description);
     setBody(rule.body);
+    setUsageMode(rule.usageMode);
     setPreview(false);
     setEditorOpen(true);
   }
@@ -73,7 +82,7 @@ export function RuleFolderView({
         const res = await fetch(`/api/rules/${editing.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, description, body }),
+          body: JSON.stringify({ name, description, body, usageMode }),
         });
         if (!res.ok) {
           const data = (await res.json()) as { error?: string };
@@ -89,7 +98,7 @@ export function RuleFolderView({
         const res = await fetch(`/api/rule-folders/${folder.id}/rules`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, description, body }),
+          body: JSON.stringify({ name, description, body, usageMode }),
         });
         if (!res.ok) {
           const data = (await res.json()) as { error?: string };
@@ -125,6 +134,7 @@ export function RuleFolderView({
 name: ${name.trim() || "rule-name"}
 description: >-
   ${description.trim() || "Brief description of when this rule applies."}
+usage_mode: ${usageMode}
 ---
 
 ${body}`;
@@ -168,7 +178,19 @@ ${body}`;
                 <FileText className="size-4" />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="font-medium">{rule.name}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-medium">{rule.name}</p>
+                  <span
+                    className={cn(
+                      "rounded-md px-1.5 py-0.5 text-[10px] font-medium",
+                      rule.usageMode === "required"
+                        ? "bg-foreground/10 text-foreground"
+                        : "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {USAGE_MODE_LABEL[rule.usageMode]}
+                  </span>
+                </div>
                 <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
                   {rule.description || "（无 description）"}
                 </p>
@@ -204,7 +226,7 @@ ${body}`;
             <DialogTitle>{editing ? "编辑规则" : "新建规则"}</DialogTitle>
             <DialogDescription>
               对齐 Cursor Rules：持续生效的约束与偏好。Skill 是可按需调用的流程；Rule
-              是「做事时始终遵守」的规范。
+              是「做事时始终遵守」的规范。可设为必须使用（每轮注入）或按需使用。
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={saveRule} className="flex flex-col gap-3">
@@ -226,6 +248,44 @@ ${body}`;
                 onChange={(e) => setDescription(e.target.value)}
               />
             </label>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-xs text-muted-foreground">使用类型</legend>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    {
+                      value: "on_demand",
+                      title: "按需使用",
+                      hint: "相关时再加载",
+                    },
+                    {
+                      value: "required",
+                      title: "必须使用",
+                      hint: "每轮回答都会自动带上正文",
+                    },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={cn(
+                      "min-w-[10rem] flex-1 rounded-lg border px-3 py-2 text-left transition-colors",
+                      usageMode === option.value
+                        ? "border-foreground bg-muted/60"
+                        : "border-border hover:bg-muted/40",
+                    )}
+                    onClick={() => setUsageMode(option.value)}
+                  >
+                    <span className="block text-sm font-medium text-foreground">
+                      {option.title}
+                    </span>
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                      {option.hint}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs text-muted-foreground">正文（markdown）</p>
               <Button

@@ -47,6 +47,14 @@ export const LANE_LABELS: Record<Lane, string> = {
 
 export type AgentMessageRole = "user" | "assistant";
 
+export type InvokedSkill = {
+  id: string;
+  name: string;
+  command: string;
+};
+
+export type MessageImage = { id: string; name: string; url: string; path: string; mimeType: string };
+
 export type ProjectAgent = {
   id: string;
   projectId: string;
@@ -70,6 +78,8 @@ export type AgentMessage = {
   projectId: string;
   role: AgentMessageRole;
   content: string;
+  skills: InvokedSkill[];
+  images: MessageImage[];
   createdAt: string;
 };
 
@@ -83,6 +93,16 @@ export type SkillFolder = {
 };
 
 /**
+ * How a Skill or Rule is loaded into agent turns:
+ * - required — body injected every turn
+ * - on_demand — catalog only; load via getSkill/getRule when relevant
+ */
+export type LibraryUsageMode = "required" | "on_demand";
+
+/** @deprecated Prefer LibraryUsageMode; kept for existing Skill call sites. */
+export type SkillUsageMode = LibraryUsageMode;
+
+/**
  * Collected agent Skill, stored in Cursor-style SKILL.md shape:
  * YAML frontmatter (name + description) + markdown body.
  */
@@ -92,8 +112,10 @@ export type Skill = {
   name: string;
   description: string;
   body: string;
+  usageMode: LibraryUsageMode;
   createdAt: string;
   updatedAt: string;
+  lastUsedAt: string | null;
 };
 
 /** Folder in the Rules Library. */
@@ -116,6 +138,7 @@ export type Rule = {
   name: string;
   description: string;
   body: string;
+  usageMode: LibraryUsageMode;
   createdAt: string;
   updatedAt: string;
 };
@@ -135,6 +158,7 @@ export type StewardMessage = {
   id: string;
   role: AgentMessageRole;
   content: string;
+  skills: InvokedSkill[];
+  images: MessageImage[];
   createdAt: string;
 };
-

@@ -26,13 +26,15 @@
 
 **Skill Folder**: Named container inside the Skills Library that groups related Skills.
 
-**Skill**: A Cursor-style Agent Skill with `name`, `description`, and markdown body (SKILL.md shape); a procedural playbook invoked when relevant.
+**Skill**: A Cursor-style Agent Skill with `name`, `description`, markdown body (SKILL.md shape), and a **Library Usage Mode**; a procedural playbook.
 
 **Rules Library**: Personal collection of Agent Rules, organized in folders (parallel to the Skills Library).
 
 **Rule Folder**: Named container inside the Rules Library that groups related Rules.
 
-**Rule**: A Cursor-style standing constraint with `name`, `description`, and markdown body; persistent guidance (like `.cursor/rules`), not a step-by-step Skill.
+**Rule**: A Cursor-style standing constraint with `name`, `description`, markdown body, and a **Library Usage Mode**; persistent guidance (like `.cursor/rules`), not a step-by-step Skill.
+
+**Library Usage Mode**: How a Skill or Rule is loaded into agent turns — **required** (必须使用: body injected every turn) or **on_demand** (按需使用: catalog + getSkill/getRule / slash when relevant).
 
 **Project Order**: The display order of active Projects in the workspace sidebar; Steward may propose a full reorder via tool, applied only after user confirmation. Piggy-bank Projects are excluded.
 
@@ -61,19 +63,21 @@
 - A Project is either active or in the Project Piggy Bank (not both for sidebar purposes).
 - The Steward portfolio snapshot includes active Projects and Project Piggy Bank Projects (boards + Agent Memory Notes for both).
 - The Steward also reads Inbox Tasks (unassigned capture) and catalogs of the Skills Library and Rules Library (folder/item ids + name + description only, not body).
-- The Project Agent also reads the Skills Library catalog (same shape); both Steward and Project Agent load Skill bodies on demand with getSkill before answering when relevant.
+- The Project Agent also reads the Skills Library catalog (same shape); both Steward and Project Agent load on-demand Skill bodies with getSkill when relevant; required Skills have their bodies injected every turn.
 - Function tool calls (including read-only getSkill/getRule) are shown in the chat message UI.
 - The Skills Library contains many Skill Folders.
 - A Skill Folder contains many Skills.
 - The Rules Library contains many Rule Folders.
 - A Rule Folder contains many Rules.
+- Each Skill and Rule has a Library Usage Mode (required or on_demand); Steward also auto-injects required Rules each turn.
 
 ## Flagged ambiguities
 
 - "Agent" alone is ambiguous — resolved: use **Project Agent** for the per-project chat advisor; use **Steward** for the global advisor; use **Agent API** for the external task-write HTTP API.
 - "总管家" — resolved: domain term **Steward** (UI may still show 总管家).
 - Steward skill/rule context — resolved: catalog only (folder/item ids + name + description); full body via read-only getSkill/getRule tools; Steward may mutate libraries via tools after confirmation; when creating/copying, follow user instructions and preserve source body unless asked to rewrite.
-- Project Agent skill context — resolved: same Skills catalog + on-demand getSkill; Project Agent does not mutate the Skills Library or use Rules Library tools.
+- Project Agent skill context — resolved: same Skills catalog; required Skills auto-injected each turn; on-demand Skills via getSkill / slash; Project Agent does not mutate the Skills Library or use Rules Library tools.
+- Library Usage Mode — resolved: **required** = 必须使用 (inject body every turn); **on_demand** = 按需使用 (catalog + getSkill/getRule); applies to both Skills and Rules (Steward injects required Rules).
 - Steward vs Project Agent scope — resolved: Project Agent is single-Project progress (+ Skills catalog); Steward is portfolio-level and also sees Inbox + Skills/Rules catalogs.
 - Steward → Project Agent handoff — resolved: each Project Agent prompt includes the latest 3 Steward dialogue rounds (up to 6 messages) as read-only context; no filter by project name.
 - Steward Done history depth — resolved: last 10 completed Tasks per Project (title + start/complete times) in each prompt snapshot.

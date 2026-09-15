@@ -70,3 +70,8 @@ yarn-error.log*
 .cursor/*
 !.cursor/rules/
 !.cursor/rules/**
+
+# Codex credentials belong in the user profile, never this repository
+/auth.json
+/.codex/auth.json
+/service.sock

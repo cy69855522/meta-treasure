@@ -26,6 +26,7 @@ export async function POST(request: Request, { params }: Params) {
     name?: string;
     description?: string;
     body?: string;
+    usageMode?: string;
   };
 
   if (!body.name?.trim()) {
@@ -38,6 +39,10 @@ export async function POST(request: Request, { params }: Params) {
       name: body.name,
       description: body.description,
       body: body.body,
+      usageMode:
+        body.usageMode === "required" || body.usageMode === "on_demand"
+          ? body.usageMode
+          : undefined,
     });
     return Response.json({ skill }, { status: 201 });
   } catch (error) {

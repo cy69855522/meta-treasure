@@ -1,39 +1,15 @@
-import { getProject, rewindAgentMessages } from "@/lib/db";
-
-export const dynamic = "force-dynamic";
-
-type Params = { params: Promise<{ id: string }> };
-
-export async function POST(request: Request, { params }: Params) {
-  const { id } = await params;
-  if (!getProject(id)) {
-    return Response.json({ error: "Project not found" }, { status: 404 });
-  }
-
-  const body = (await request.json()) as {
-    messageId?: string;
-    keepCount?: number;
-    userOrdinal?: number;
-    keepMessage?: boolean;
-  };
-
-  if (
-    typeof body.keepCount !== "number" ||
-    !Number.isFinite(body.keepCount) ||
-    body.keepCount < 0
-  ) {
-    return Response.json({ error: "keepCount is required" }, { status: 400 });
-  }
-
-  const result = rewindAgentMessages(id, {
-    messageId: body.messageId,
-    keepCount: Math.floor(body.keepCount),
-    userOrdinal:
-      typeof body.userOrdinal === "number" && body.userOrdinal >= 0
-        ? Math.floor(body.userOrdinal)
-        : undefined,
-    keepMessage: body.keepMessage === true,
-  });
-
-  return Response.json(result);
+import { syncCodexMessages } from "@/lib/db";
+import { checkOrigin, checkScope, codexCall } from "@/lib/codex-server";
+export async function POST(request: Request, { params }: {params:Promise<{id:string}>}) {
+ const {id} = await params;
+ try { checkOrigin(request); const scope = id; checkScope(scope); const b = await request.json();
+ const state = await codexCall("rewind", {scope,messageId:b.messageId,keepMessage:b.keepMessage === true});
+ syncCodexMessages(scope,state.messages);
+ return Response.json({messages:state.messages.map(m => ({
+  id:m.id, role:m.role,
+  content:m.parts.filter(p=>p.type==="text").map(p=>p.type==="text"?p.text:"").join(""),
+  skills:m.parts.filter(p=>p.type==="skill").map(p=>({id:String(p.id),name:String(p.name),command:String(p.command)})),
+  images:m.parts.filter(p=>p.type==="image").map(p=>({id:String(p.id),name:String(p.name),url:String(p.url),path:String(p.path),mimeType:String(p.mimeType)})),
+ })),hasMore:false});
+ } catch(e) { return Response.json({error:e instanceof Error?e.message:"撤回失败"},{status:400}); }
 }

@@ -1,29 +1,32 @@
 "use client";
 
-import { useChat } from "@ai-sdk/react";
+import { useCodexChat } from "@/hooks/use-codex-chat";
+import { CodexControls, CodexSettings } from "@/components/codex-controls";
 import {
-  DefaultChatTransport,
-  lastAssistantMessageIsCompleteWithApprovalResponses,
+  isSkillMessagePart,
+  isImageMessagePart,
   type UIMessage,
-} from "ai";
+} from "@/lib/codex-types";
 import { LoaderCircle, MessageSquare, NotebookPen, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AgentToolApprovalCard,
   isAgentToolPart,
   rejectPendingApprovalsInMessages,
 } from "@/components/agent-tool-approval";
-import { ChatComposer } from "@/components/chat-composer";
+import { ChatComposer, type ChatComposerHandle } from "@/components/chat-composer";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { useAgentChrome } from "@/components/agent-chrome";
 import { MemoryNotesStrip } from "@/components/memory-notes-strip";
 import { MessageRetryButton } from "@/components/message-retry-button";
 import { MessageRewindButton } from "@/components/message-rewind-button";
+import { MessageSkillTags } from "@/components/message-skill-tags";
+import { MessageImages } from "@/components/message-images";
 import { Button } from "@/components/ui/button";
 import { useStickToBottomScroll } from "@/hooks/use-stick-to-bottom-scroll";
 import { useLoadOlderMessages } from "@/hooks/use-load-older-messages";
-import { AGENT_PROMPT_MESSAGE_LIMIT, CHAT_HISTORY_PAGE_SIZE } from "@/lib/constants";
+import { CHAT_HISTORY_PAGE_SIZE } from "@/lib/constants";
 import type { AgentMemoryNote, AgentMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -31,8 +34,20 @@ function toUIMessages(messages: AgentMessage[]): UIMessage[] {
   return messages.map((m) => ({
     id: m.id,
     role: m.role,
-    parts: [{ type: "text" as const, text: m.content }],
+    parts: [
+      ...(m.skills || []).map((skill) => ({ type: "skill" as const, ...skill })),
+      ...(m.images || []).map((image) => ({ type: "image" as const, ...image })),
+      ...(m.content ? [{ type: "text" as const, text: m.content }] : []),
+    ],
   }));
+}
+
+function uiMessageText(message: UIMessage): string {
+  return message.parts
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("")
+    .trim();
 }
 
 function statusLabel(status: string): string | null {
@@ -58,7 +73,6 @@ export function ProjectAgentPanel({
   projectColor,
   projectDescription,
   initialMessages,
-  initialHasMore = false,
   initialNotes,
   children,
 }: Props) {
@@ -68,21 +82,14 @@ export function ProjectAgentPanel({
   const [tab, setTab] = useState<"chat" | "notes">("chat");
   const [notes, setNotes] = useState(initialNotes);
   const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
-  const [hasMoreHistory, setHasMoreHistory] = useState(initialHasMore);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<ChatComposerHandle>(null);
 
   useEffect(() => {
     setAgentSessionActive(open);
     return () => setAgentSessionActive(false);
   }, [open, setAgentSessionActive]);
-
-  const transport = useMemo(
-    () =>
-      new DefaultChatTransport({
-        api: `/api/projects/${projectId}/chat`,
-      }),
-    [projectId],
-  );
 
   const {
     messages,
@@ -94,12 +101,11 @@ export function ProjectAgentPanel({
     clearError,
     stop,
     addToolApprovalResponse,
-  } = useChat({
-    id: `project-agent-${projectId}`,
-    messages: toUIMessages(initialMessages),
-    transport,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
-  });
+    codexState,
+    codexAction,
+    modelOptions,
+    setModel,
+  } = useCodexChat({scope:projectId,initialMessages:toUIMessages(initialMessages)});
 
   const [rewinding, setRewinding] = useState(false);
 
@@ -118,10 +124,20 @@ export function ProjectAgentPanel({
     [router, refreshNotes],
   );
 
+  const previousStatus = useRef(status);
+  useEffect(() => {
+    if (["submitted", "streaming"].includes(previousStatus.current) && !["submitted", "streaming"].includes(status)) {
+      void refreshNotes();
+    }
+    previousStatus.current = status;
+  }, [status, refreshNotes]);
+
   const rewindToMessage = useCallback(
     async (index: number) => {
       const target = messages[index];
       if (!target) return;
+      const restoreText =
+        target.role === "user" ? uiMessageText(target) : "";
       const userOrdinal =
         target.role === "user"
           ? messages
@@ -130,7 +146,7 @@ export function ProjectAgentPanel({
           : undefined;
       setRewinding(true);
       clearError();
-      stop();
+      await stop();
       try {
         const res = await fetch(
           `/api/projects/${projectId}/agent/messages/rewind`,
@@ -156,6 +172,7 @@ export function ProjectAgentPanel({
         };
         setMessages(toUIMessages(data.messages));
         setHasMoreHistory(Boolean(data.hasMore));
+        if (restoreText) composerRef.current?.appendDraft(restoreText);
       } catch (err) {
         console.error(err);
         window.alert(err instanceof Error ? err.message : "撤回失败");
@@ -175,7 +192,7 @@ export function ProjectAgentPanel({
         1;
       setRewinding(true);
       clearError();
-      stop();
+      await stop();
       try {
         const res = await fetch(
           `/api/projects/${projectId}/agent/messages/rewind`,
@@ -302,14 +319,14 @@ export function ProjectAgentPanel({
     setNotes((prev) => prev.filter((n) => n.id !== noteId));
   }
 
-  function submitChat(text: string) {
-    if (!text || busy) return;
+  function submitChat(message: { text: string; images: import("@/lib/types").MessageImage[] }) {
+    if ((!message.text && !message.images.length) || busy) return;
     clearError();
     pinToBottom();
     // Sending a new turn without clicking 拒绝 must deny pending tools,
     // otherwise convertToModelMessages throws MissingToolResultsError.
     setMessages((prev) => rejectPendingApprovalsInMessages(prev));
-    void sendMessage({ text });
+    void sendMessage(message);
   }
 
   function openChat() {
@@ -372,12 +389,11 @@ export function ProjectAgentPanel({
                   className="size-2.5 rounded-full"
                   style={{ backgroundColor: projectColor }}
                 />
-                <p className="text-xs text-muted-foreground">Project Agent</p>
+                <p className="text-xs text-muted-foreground">Codex Agent</p>
               </div>
               <h2 className="truncate text-lg font-semibold">{projectName}</h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                最近 {AGENT_PROMPT_MESSAGE_LIMIT}{" "}
-                条对话 + 看板；变更需你确认后才会应用
+                Codex · 保留会话上下文；权限请求在对话中确认
               </p>
             </div>
             <Button
@@ -416,22 +432,24 @@ export function ProjectAgentPanel({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="ml-auto md:hidden"
+                className="md:hidden"
                 onClick={() => setOpen(false)}
                 aria-label="关闭顾问"
               >
                 <X />
               </Button>
             ) : null}
+            <CodexSettings state={codexState} action={codexAction} modelOptions={modelOptions} onModelChange={setModel} />
           </div>
 
           {tab === "chat" ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              <div
+            <div className="relative flex min-h-0 flex-1">
+              <div className="flex min-w-0 flex-1 flex-col">
+                <div
                 ref={scrollRef}
                 onScroll={onScroll}
                 className="mx-auto min-h-0 w-full max-w-6xl flex-1 space-y-4 overflow-y-auto px-6 py-5 md:px-10"
-              >
+                >
                 {loadingOlder ? (
                   <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
                     <LoaderCircle className="size-3.5 animate-spin" />
@@ -473,7 +491,8 @@ export function ProjectAgentPanel({
                     .map((p) => p.text)
                     .join("");
                   const toolParts = message.parts.filter(isAgentToolPart);
-
+                  const skillParts = message.parts.filter(isSkillMessagePart);
+                  const imageParts = message.parts.filter(isImageMessagePart);
                   return (
                     <div
                       key={message.id}
@@ -495,6 +514,8 @@ export function ProjectAgentPanel({
                             顾问
                           </p>
                         ) : null}
+                        {!isUser ? <MessageSkillTags skills={skillParts} /> : null}
+                        <MessageImages images={imageParts} />
                         {reasoning ? (
                           <details className="mb-2 rounded-lg bg-background/50 px-2 py-1.5 text-xs text-muted-foreground">
                             <summary className="cursor-pointer select-none">
@@ -529,11 +550,11 @@ export function ProjectAgentPanel({
                         {!isUser
                           ? toolParts.map((part) => (
                               <AgentToolApprovalCard
-                                key={
+                                key={String(
                                   "toolCallId" in part && part.toolCallId
                                     ? part.toolCallId
-                                    : part.type
-                                }
+                                    : part.type,
+                                )}
                                 part={part}
                                 scope="project"
                                 projectId={projectId}
@@ -577,32 +598,36 @@ export function ProjectAgentPanel({
                     {error.message}
                   </p>
                 ) : null}
-              </div>
-
-              {thinkingLabel ? (
-                <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-6 py-2 text-xs text-muted-foreground md:px-10">
-                  <LoaderCircle className="size-3 animate-spin" />
-                  <span className="flex-1">{thinkingLabel}</span>
-                  {busy ? (
-                    <button
-                      type="button"
-                      className="underline-offset-2 hover:underline"
-                      onClick={() => stop()}
-                    >
-                      停止
-                    </button>
-                  ) : null}
                 </div>
-              ) : null}
 
-              <ChatComposer
+                {thinkingLabel ? (
+                  <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-6 py-2 text-xs text-muted-foreground md:px-10">
+                    <LoaderCircle className="size-3 animate-spin" />
+                    <span className="flex-1">{thinkingLabel}</span>
+                    {busy ? (
+                      <button
+                        type="button"
+                        className="underline-offset-2 hover:underline"
+                        onClick={() => stop()}
+                      >
+                        停止
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <ChatComposer
+                ref={composerRef}
+                scope={projectId}
                 id="project-agent-chat-input"
                 name="project-agent-chat-input"
                 placeholder="发送消息…"
                 disabled={busy}
                 textareaRef={inputRef}
                 onSubmit={submitChat}
-              />
+                />
+              </div>
+              <CodexControls state={codexState} action={codexAction} onApplied={onToolApplied} />
             </div>
           ) : (
             <MemoryNotesStrip

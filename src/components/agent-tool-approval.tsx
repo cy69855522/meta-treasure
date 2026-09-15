@@ -2,6 +2,7 @@
 
 import { Check, LoaderCircle, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { ActionDiffList } from "@/components/action-diff-list";
 import { Button } from "@/components/ui/button";
 import type {
   ActionAffects,
@@ -100,11 +101,6 @@ function resolveToolName(part: ToolPartLike): string | null {
     return part.toolName;
   }
   return toolNameFromPartType(part.type);
-}
-
-function formatCell(value: string | null): string {
-  if (value === null) return "—";
-  return value;
 }
 
 function toolDisplayLabel(toolName: string): string {
@@ -357,29 +353,7 @@ export function AgentToolApprovalCard({
       ) : null}
 
       {preview && preview.diffs.length > 0 ? (
-        <ul className="space-y-2">
-          {preview.diffs.map((diff) => (
-            <li
-              key={`${diff.field}-${diff.before}-${diff.after}`}
-              className="rounded-lg bg-muted/60 px-2.5 py-2"
-            >
-              <p className="text-[11px] font-medium text-muted-foreground">
-                {diff.field}
-              </p>
-              <div className="mt-1 grid gap-1 text-xs sm:grid-cols-[1fr_auto_1fr] sm:items-start">
-                <p className="whitespace-pre-wrap break-words text-muted-foreground line-through decoration-muted-foreground/50">
-                  {formatCell(diff.before)}
-                </p>
-                <span className="hidden text-muted-foreground sm:inline">
-                  →
-                </span>
-                <p className="whitespace-pre-wrap break-words font-medium">
-                  {formatCell(diff.after)}
-                </p>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <ActionDiffList diffs={preview.diffs} className="mt-0" />
       ) : null}
 
       {errored ? (
@@ -418,7 +392,7 @@ export function AgentToolApprovalCard({
             ? "已确认，正在应用…"
             : part.approval?.reason?.includes("新消息")
               ? "未确认，已随新消息自动拒绝"
-              : "已拒绝，等待顾问回复…"}
+              : "已拒绝，本轮已停止，等待你发送新消息"}
         </p>
       ) : null}
     </div>

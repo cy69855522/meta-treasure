@@ -1,30 +1,21 @@
 import "server-only";
 import {
-  convertToModelMessages,
-  isStepCount,
-  streamText,
-  type UIMessage,
-} from "ai";
-import { agentToolApproval, buildStewardTools } from "@/lib/agent-tools";
-import {
   AGENT_PROMPT_MESSAGE_LIMIT,
   STEWARD_DONE_HISTORY_LIMIT,
 } from "@/lib/constants";
 import {
-  createStewardMessage,
   listActiveProjects,
   listAgentMemoryNotes,
   listPiggyBankProjects,
-  listRuleFolders,
-  listRules,
   listStewardMemoryNotes,
   listTasks,
 } from "@/lib/db";
 import {
   buildSkillsCatalogBlock,
+  buildRulesCatalogBlock,
   SKILL_LOAD_PROMPT_LINES,
+  RULE_LOAD_PROMPT_LINES,
 } from "@/lib/library-catalog";
-import { createProjectLlm } from "@/lib/project-agent";
 import { LANE_LABELS, NOW_WIP_LIMIT, type Lane, type Task } from "@/lib/types";
 
 function formatDoneTask(task: Task): string {
@@ -32,7 +23,6 @@ function formatDoneTask(task: Task): string {
   const end = task.completedAt ?? task.updatedAt;
   return `  - ${task.title} (id=${task.id})（${start.slice(0, 10)} → ${end.slice(0, 10)}）`;
 }
-
 function formatProjectSnapshot(
   project: {
     id: string;
@@ -120,28 +110,6 @@ function buildInboxBlock(): string {
   return inbox.map((t) => `- ${t.title} (id=${t.id})`).join("\n");
 }
 
-function buildRulesCatalogBlock(): string {
-  const folders = listRuleFolders();
-  if (folders.length === 0) return "（规则库为空）";
-
-  return folders
-    .map((folder) => {
-      const rules = listRules(folder.id);
-      const header = `### 文件夹：${folder.name} (id=${folder.id})`;
-      if (rules.length === 0) {
-        return `${header}\n（无规则）`;
-      }
-      return [
-        header,
-        ...rules.map(
-          (r) =>
-            `- ${r.name} (id=${r.id}): ${r.description.trim() || "（无 description）"}`,
-        ),
-      ].join("\n");
-    })
-    .join("\n\n");
-}
-
 export function buildStewardSystemPrompt(): string {
   const stewardNotes = listStewardMemoryNotes();
   const stewardNotesBlock =
@@ -158,6 +126,10 @@ export function buildStewardSystemPrompt(): string {
     "你是工作区的总管家（Steward）：跨项目顾问。",
     "你可以综览活跃项目与项目储蓄罐内项目的节奏、收件箱堆积、技能库/规则库目录与各项目长期笔记，帮助用户做取舍、排优先级、化解迷茫。",
     "若要增删改总管家长期笔记、任意任务、技能库或规则库，必须调用对应 function tool；系统会先让用户预览确认，通过后才会真正落库。",
+    "你是只读代码顾问。可以搜索和读取已绑定项目中的代码文件，用代码事实回答问题。",
+    "禁止修改、创建或删除项目代码文件；禁止安装依赖、执行构建或测试、启动服务以及运行会改变项目或系统状态的命令。",
+    "用户要求你写代码或执行命令时，说明当前 Agent 仅提供分析与代码阅读，并给出可供用户自行实施的建议。",
+    "搜索代码时优先使用 rg 或 rg --files，并限定到相关目录和文件类型。禁止使用 grep -r .、find 扫描整个仓库或读取 .next、node_modules、dist、build、.git 等生成/依赖目录；命令输出应保持聚焦，必要时限制行数。",
     "要把任务标为完成时，优先调用 completeTask（移入 Done），不要用 deleteTask。",
     "在用户确认前，不要声称已经改过看板、笔记、技能或规则。",
     "若用户拒绝某次 tool 执行，不要重试同一操作；告知未应用即可。",
@@ -170,7 +142,7 @@ export function buildStewardSystemPrompt(): string {
     "技能库：getSkill（只读，含正文）/ createSkillFolder / updateSkillFolder / deleteSkillFolder / createSkill / updateSkill / deleteSkill。",
     "规则库：getRule（只读，含正文）/ createRuleFolder / updateRuleFolder / deleteRuleFolder / createRule / updateRule / deleteRule。",
     ...SKILL_LOAD_PROMPT_LINES,
-    "规则正文同样不在目录里；复制或按规则办事时先 getRule。",
+    ...RULE_LOAD_PROMPT_LINES,
     "创建或修改 Skill/Rule 时：严格遵循用户指令；用户给出的原文或「复制」请求应尽量原样保留 body，不要套固定 SKILL.md/RULE 模板，也不要擅自大幅改写。",
     "仅当用户明确要求你起草、改写、润色或补充时，才重写正文。删除目录会级联删除其中全部条目。",
     `Now 列 WIP 上限为 ${NOW_WIP_LIMIT}。`,
@@ -194,62 +166,4 @@ export function buildStewardSystemPrompt(): string {
     "=== 规则库目录（folder/rule id + name / description，无正文） ===",
     buildRulesCatalogBlock(),
   ].join("\n");
-}
-
-function extractLastUserText(
-  messages: Array<{
-    role: string;
-    parts?: Array<{ type: string; text?: string }>;
-    content?: string;
-  }>,
-): string {
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  if (!lastUser) return "";
-  if (typeof lastUser.content === "string" && lastUser.content.trim()) {
-    return lastUser.content.trim();
-  }
-  return (lastUser.parts ?? [])
-    .filter((p) => p.type === "text" && typeof p.text === "string")
-    .map((p) => p.text!)
-    .join("")
-    .trim();
-}
-
-export async function streamStewardChat(input: {
-  uiMessages: UIMessage[];
-  abortSignal?: AbortSignal;
-  /** AI SDK send trigger — regenerate must not re-persist the user turn. */
-  trigger?: "submit-message" | "regenerate-message";
-}) {
-  const last = input.uiMessages.at(-1);
-  const isContinuation = last?.role === "assistant";
-  const isRegenerate = input.trigger === "regenerate-message";
-
-  if (!isContinuation) {
-    const userText = extractLastUserText(input.uiMessages);
-    if (!userText) {
-      throw new Error("Empty user message");
-    }
-    if (!isRegenerate) {
-      createStewardMessage({ role: "user", content: userText });
-    }
-  }
-
-  const tools = buildStewardTools();
-  const recent = input.uiMessages.slice(-AGENT_PROMPT_MESSAGE_LIMIT);
-  const messages = await convertToModelMessages(recent, { tools });
-
-  return streamText({
-    model: createProjectLlm(),
-    system: buildStewardSystemPrompt(),
-    messages,
-    tools,
-    toolApproval: agentToolApproval(),
-    stopWhen: isStepCount(8),
-    abortSignal: input.abortSignal,
-    onFinish: ({ text }) => {
-      if (!text.trim()) return;
-      createStewardMessage({ role: "assistant", content: text });
-    },
-  });
 }

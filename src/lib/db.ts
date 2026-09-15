@@ -8,6 +8,8 @@ import type {
   AgentMemoryNote,
   AgentMessage,
   AgentMessageRole,
+  InvokedSkill,
+  MessageImage,
   Lane,
   Project,
   ProjectAgent,
@@ -15,6 +17,8 @@ import type {
   RuleFolder,
   Skill,
   SkillFolder,
+  SkillUsageMode,
+  LibraryUsageMode,
   StewardMemoryNote,
   StewardMessage,
   Task,
@@ -72,6 +76,8 @@ type AgentMessageRow = {
   project_id: string;
   role: string;
   content: string;
+  skills_json: string;
+  images_json: string;
   created_at: string;
 };
 
@@ -89,8 +95,10 @@ type SkillRow = {
   name: string;
   description: string;
   body: string;
+  usage_mode: string;
   created_at: string;
   updated_at: string;
+  last_used_at: string | null;
 };
 
 type RuleFolderRow = {
@@ -107,6 +115,7 @@ type RuleRow = {
   name: string;
   description: string;
   body: string;
+  usage_mode: string;
   created_at: string;
   updated_at: string;
 };
@@ -124,11 +133,12 @@ type StewardMessageRow = {
   id: string;
   role: string;
   content: string;
+  skills_json: string;
+  images_json: string;
   created_at: string;
 };
 
 declare global {
-  // eslint-disable-next-line no-var
   var __progressDb: Database.Database | undefined;
 }
 
@@ -196,6 +206,8 @@ function mapAgentMessage(row: AgentMessageRow): AgentMessage {
     projectId: row.project_id,
     role: row.role as AgentMessageRole,
     content: row.content,
+    skills: parseInvokedSkills(row.skills_json),
+    images: parseMessageImages(row.images_json),
     createdAt: row.created_at,
   };
 }
@@ -217,8 +229,10 @@ function mapSkill(row: SkillRow): Skill {
     name: row.name,
     description: row.description,
     body: row.body,
+    usageMode: normalizeLibraryUsageMode(row.usage_mode),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastUsedAt: row.last_used_at ?? null,
   };
 }
 
@@ -239,6 +253,7 @@ function mapRule(row: RuleRow): Rule {
     name: row.name,
     description: row.description,
     body: row.body,
+    usageMode: normalizeLibraryUsageMode(row.usage_mode),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -260,8 +275,32 @@ function mapStewardMessage(row: StewardMessageRow): StewardMessage {
     id: row.id,
     role: row.role as AgentMessageRole,
     content: row.content,
+    skills: parseInvokedSkills(row.skills_json),
+    images: parseMessageImages(row.images_json),
     createdAt: row.created_at,
   };
+}
+
+function parseInvokedSkills(value: string | undefined): InvokedSkill[] {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (skill): skill is InvokedSkill =>
+        typeof skill?.id === "string" &&
+        typeof skill?.name === "string" &&
+        typeof skill?.command === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function parseMessageImages(value: string | undefined): MessageImage[] {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed) ? parsed.filter((image) => typeof image?.id === "string" && typeof image?.url === "string" && typeof image?.path === "string") : [];
+  } catch { return []; }
 }
 
 function resolveLaneTimestamps(
@@ -349,6 +388,8 @@ function ensureSchema(db: Database.Database) {
       project_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      skills_json TEXT NOT NULL DEFAULT '[]',
+      images_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
@@ -370,8 +411,10 @@ function ensureSchema(db: Database.Database) {
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       body TEXT NOT NULL DEFAULT '',
+      usage_mode TEXT NOT NULL DEFAULT 'on_demand',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      last_used_at TEXT,
       FOREIGN KEY (folder_id) REFERENCES skill_folders(id) ON DELETE CASCADE
     );
 
@@ -392,6 +435,7 @@ function ensureSchema(db: Database.Database) {
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       body TEXT NOT NULL DEFAULT '',
+      usage_mode TEXT NOT NULL DEFAULT 'on_demand',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (folder_id) REFERENCES rule_folders(id) ON DELETE CASCADE
@@ -413,6 +457,8 @@ function ensureSchema(db: Database.Database) {
       id TEXT PRIMARY KEY,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      skills_json TEXT NOT NULL DEFAULT '[]',
+      images_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL
     );
 
@@ -439,6 +485,51 @@ function ensureSchema(db: Database.Database) {
     db.exec(
       "ALTER TABLE projects ADD COLUMN in_piggy_bank INTEGER NOT NULL DEFAULT 0",
     );
+  }
+
+  const skillColumns = db.prepare("PRAGMA table_info(skills)").all() as Array<{
+    name: string;
+  }>;
+  if (!skillColumns.some((column) => column.name === "last_used_at")) {
+    db.exec("ALTER TABLE skills ADD COLUMN last_used_at TEXT");
+  }
+  if (!skillColumns.some((column) => column.name === "usage_mode")) {
+    db.exec(
+      "ALTER TABLE skills ADD COLUMN usage_mode TEXT NOT NULL DEFAULT 'on_demand'",
+    );
+  }
+
+  const ruleColumns = db.prepare("PRAGMA table_info(rules)").all() as Array<{
+    name: string;
+  }>;
+  if (!ruleColumns.some((column) => column.name === "usage_mode")) {
+    db.exec(
+      "ALTER TABLE rules ADD COLUMN usage_mode TEXT NOT NULL DEFAULT 'on_demand'",
+    );
+  }
+
+  const agentMessageColumns = db
+    .prepare("PRAGMA table_info(agent_messages)")
+    .all() as Array<{ name: string }>;
+  if (!agentMessageColumns.some((column) => column.name === "skills_json")) {
+    db.exec("ALTER TABLE agent_messages ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!agentMessageColumns.some((column) => column.name === "images_json")) db.exec("ALTER TABLE agent_messages ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'");
+  if (agentMessageColumns.some((column) => column.name === "activities_json")) {
+    db.exec("DELETE FROM agent_messages WHERE content = '' AND activities_json <> '[]'");
+    db.exec("UPDATE agent_messages SET activities_json = '[]' WHERE activities_json <> '[]'");
+  }
+
+  const stewardMessageColumns = db
+    .prepare("PRAGMA table_info(steward_messages)")
+    .all() as Array<{ name: string }>;
+  if (!stewardMessageColumns.some((column) => column.name === "skills_json")) {
+    db.exec("ALTER TABLE steward_messages ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!stewardMessageColumns.some((column) => column.name === "images_json")) db.exec("ALTER TABLE steward_messages ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'");
+  if (stewardMessageColumns.some((column) => column.name === "activities_json")) {
+    db.exec("DELETE FROM steward_messages WHERE content = '' AND activities_json <> '[]'");
+    db.exec("UPDATE steward_messages SET activities_json = '[]' WHERE activities_json <> '[]'");
   }
 
   // Best-effort backfill for rows created before timestamp columns existed.
@@ -1424,6 +1515,47 @@ export function listSkills(folderId: string): Skill[] {
   return rows.map(mapSkill);
 }
 
+export function listSkillsByRecentUse(): Skill[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM skills
+       ORDER BY last_used_at IS NULL ASC, last_used_at DESC, name ASC`,
+    )
+    .all() as SkillRow[];
+  return rows.map(mapSkill);
+}
+
+export function listRequiredSkills(): Skill[] {
+  return listSkillsByRecentUse().filter(
+    (skill) => skill.usageMode === "required",
+  );
+}
+
+export function listAllRules(): Rule[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM rules
+       ORDER BY name ASC, created_at ASC`,
+    )
+    .all() as RuleRow[];
+  return rows.map(mapRule);
+}
+
+export function listRequiredRules(): Rule[] {
+  return listAllRules().filter((rule) => rule.usageMode === "required");
+}
+
+export function markSkillsUsed(ids: string[]): void {
+  const uniqueIds = [...new Set(ids)];
+  if (uniqueIds.length === 0) return;
+  const update = getDb().prepare("UPDATE skills SET last_used_at = ? WHERE id = ?");
+  const now = new Date().toISOString();
+  const transaction = getDb().transaction((skillIds: string[]) => {
+    for (const id of skillIds) update.run(now, id);
+  });
+  transaction(uniqueIds);
+}
+
 export function getSkill(id: string): Skill | null {
   const row = getDb()
     .prepare("SELECT * FROM skills WHERE id = ?")
@@ -1435,24 +1567,35 @@ function normalizeSkillName(name: string): string {
   return name.trim().replace(/\s+/g, " ").slice(0, 120);
 }
 
+export function normalizeLibraryUsageMode(value: unknown): LibraryUsageMode {
+  return value === "required" ? "required" : "on_demand";
+}
+
+/** @deprecated Prefer normalizeLibraryUsageMode */
+export function normalizeSkillUsageMode(value: unknown): SkillUsageMode {
+  return normalizeLibraryUsageMode(value);
+}
+
 export function createSkill(input: {
   folderId: string;
   name: string;
   description?: string;
   body?: string;
+  usageMode?: LibraryUsageMode;
 }): Skill {
   if (!getSkillFolder(input.folderId)) {
     throw new Error("Folder not found");
   }
 
   const name = normalizeSkillName(input.name) || `skill-${Date.now().toString(36)}`;
+  const usageMode = normalizeLibraryUsageMode(input.usageMode);
   const now = new Date().toISOString();
   const id = randomUUID();
 
   getDb()
     .prepare(
-      `INSERT INTO skills (id, folder_id, name, description, body, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO skills (id, folder_id, name, description, body, usage_mode, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -1460,6 +1603,7 @@ export function createSkill(input: {
       name,
       input.description?.trim() ?? "",
       input.body ?? "",
+      usageMode,
       now,
       now,
     );
@@ -1474,6 +1618,7 @@ export function updateSkill(
     description: string;
     body: string;
     folderId: string;
+    usageMode: LibraryUsageMode;
   }>,
 ): Skill | null {
   const existing = getSkill(id);
@@ -1487,11 +1632,15 @@ export function updateSkill(
     patch.name !== undefined
       ? normalizeSkillName(patch.name) || existing.name
       : existing.name;
+  const usageMode =
+    patch.usageMode !== undefined
+      ? normalizeLibraryUsageMode(patch.usageMode)
+      : existing.usageMode;
 
   getDb()
     .prepare(
       `UPDATE skills
-       SET folder_id = ?, name = ?, description = ?, body = ?, updated_at = ?
+       SET folder_id = ?, name = ?, description = ?, body = ?, usage_mode = ?, updated_at = ?
        WHERE id = ?`,
     )
     .run(
@@ -1501,6 +1650,7 @@ export function updateSkill(
         ? patch.description.trim()
         : existing.description,
       patch.body !== undefined ? patch.body : existing.body,
+      usageMode,
       new Date().toISOString(),
       id,
     );
@@ -1520,6 +1670,7 @@ export function formatSkillMarkdown(skill: Skill): string {
 name: ${skill.name}
 description: >-
   ${description.replace(/\n/g, "\n  ")}
+usage_mode: ${skill.usageMode}
 ---
 
 ${skill.body.trim()}\n`;
@@ -1672,6 +1823,7 @@ export function createRule(input: {
   name: string;
   description?: string;
   body?: string;
+  usageMode?: LibraryUsageMode;
 }): Rule {
   if (!getRuleFolder(input.folderId)) {
     throw new Error("Folder not found");
@@ -1679,13 +1831,14 @@ export function createRule(input: {
 
   const name =
     normalizeRuleName(input.name) || `rule-${Date.now().toString(36)}`;
+  const usageMode = normalizeLibraryUsageMode(input.usageMode);
   const now = new Date().toISOString();
   const id = randomUUID();
 
   getDb()
     .prepare(
-      `INSERT INTO rules (id, folder_id, name, description, body, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO rules (id, folder_id, name, description, body, usage_mode, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -1693,6 +1846,7 @@ export function createRule(input: {
       name,
       input.description?.trim() ?? "",
       input.body ?? "",
+      usageMode,
       now,
       now,
     );
@@ -1707,6 +1861,7 @@ export function updateRule(
     description: string;
     body: string;
     folderId: string;
+    usageMode: LibraryUsageMode;
   }>,
 ): Rule | null {
   const existing = getRule(id);
@@ -1720,11 +1875,15 @@ export function updateRule(
     patch.name !== undefined
       ? normalizeRuleName(patch.name) || existing.name
       : existing.name;
+  const usageMode =
+    patch.usageMode !== undefined
+      ? normalizeLibraryUsageMode(patch.usageMode)
+      : existing.usageMode;
 
   getDb()
     .prepare(
       `UPDATE rules
-       SET folder_id = ?, name = ?, description = ?, body = ?, updated_at = ?
+       SET folder_id = ?, name = ?, description = ?, body = ?, usage_mode = ?, updated_at = ?
        WHERE id = ?`,
     )
     .run(
@@ -1734,6 +1893,7 @@ export function updateRule(
         ? patch.description.trim()
         : existing.description,
       patch.body !== undefined ? patch.body : existing.body,
+      usageMode,
       new Date().toISOString(),
       id,
     );
@@ -1753,6 +1913,7 @@ export function formatRuleMarkdown(rule: Rule): string {
 name: ${rule.name}
 description: >-
   ${description.replace(/\n/g, "\n  ")}
+usage_mode: ${rule.usageMode}
 ---
 
 ${rule.body.trim()}\n`;
@@ -1991,4 +2152,35 @@ export function rewindStewardMessages(input: {
 
 export function listRecentStewardMessagesForPrompt(): StewardMessage[] {
   return listStewardMessages({ limit: AGENT_PROMPT_MESSAGE_LIMIT });
+}
+
+/** Mirror the Codex conversation for existing history pages and cross-agent context. */
+export function syncCodexMessages(scope: string, messages: Array<{id:string;role:string;parts:Array<{type:string;text?:string;id?:unknown;name?:unknown;command?:unknown;url?:unknown;path?:unknown;mimeType?:unknown}>}>) {
+  const rows = messages.filter(m => m.role === "user" || m.role === "assistant").map(m => ({
+    id: m.id,
+    role: m.role,
+    content: m.parts.filter(p=>p.type === "text").map(p=>p.text || "").join(""),
+    skills: m.parts.filter((p): p is typeof p & InvokedSkill =>
+      p.type === "skill" && typeof p.id === "string" && typeof p.name === "string" && typeof p.command === "string"
+    ).map(p => ({ id: p.id, name: p.name, command: p.command })),
+    images: m.parts.filter((p): p is typeof p & MessageImage => p.type === "image" && typeof p.id === "string" && typeof p.url === "string" && typeof p.path === "string" && typeof p.name === "string" && typeof p.mimeType === "string").map(p => ({ id: p.id, name: p.name, url: p.url, path: p.path, mimeType: p.mimeType })),
+  }));
+  const old = scope === "steward" ? listStewardMessages() : listAgentMessages(scope);
+  if (old.length === rows.length && rows.every((m,i)=>m.id===old[i].id && m.content===old[i].content && JSON.stringify(m.skills)===JSON.stringify(old[i].skills) && JSON.stringify(m.images)===JSON.stringify(old[i].images))) return;
+  const table = scope === "steward" ? "steward_messages" : "agent_messages";
+  const db = getDb();
+  db.transaction(()=>{
+    const keep = new Set(rows.map(m=>m.id));
+    const remove = db.prepare(`DELETE FROM ${table} WHERE id = ?`);
+    for(const m of old) if(!keep.has(m.id)) remove.run(m.id);
+    let time = old.length ? Date.parse(old[old.length-1].createdAt) : Date.now();
+    const known = new Map(old.map(m=>[m.id,m.createdAt]));
+    for(const m of rows) {
+      const created = known.get(m.id) || new Date(time=Math.max(Date.now(),time+1)).toISOString();
+      const skillsJson = JSON.stringify(m.skills);
+      const imagesJson = JSON.stringify(m.images);
+      if(scope === "steward") db.prepare("INSERT INTO steward_messages (id,role,content,skills_json,images_json,created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content, skills_json=excluded.skills_json, images_json=excluded.images_json").run(m.id,m.role,m.content,skillsJson,imagesJson,created);
+      else db.prepare("INSERT INTO agent_messages (id,project_id,role,content,skills_json,images_json,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content, skills_json=excluded.skills_json, images_json=excluded.images_json").run(m.id,scope,m.role,m.content,skillsJson,imagesJson,created);
+    }
+  })();
 }
