@@ -19,6 +19,7 @@ import { ChatComposer, type ChatComposerHandle } from "@/components/chat-compose
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { useAgentChrome } from "@/components/agent-chrome";
 import { MemoryNotesStrip } from "@/components/memory-notes-strip";
+import { MessageCopyButton } from "@/components/message-copy-button";
 import { MessageRetryButton } from "@/components/message-retry-button";
 import { MessageRewindButton } from "@/components/message-rewind-button";
 import { MessageSkillTags } from "@/components/message-skill-tags";
@@ -563,20 +564,28 @@ export function ProjectAgentPanel({
                               />
                             ))
                           : null}
-                        {toolParts.length === 0 ? (
+                        {text.trim() || toolParts.length === 0 ? (
                           <div className="mt-2 flex justify-end gap-0.5">
-                            {isUser ? (
-                              <MessageRetryButton
-                                disabled={busy}
-                                onRetry={() => retryFromMessage(index)}
-                                tone="onPrimary"
-                              />
-                            ) : null}
-                            <MessageRewindButton
-                              disabled={busy}
-                              onRewind={() => rewindToMessage(index)}
+                            <MessageCopyButton
+                              text={text}
                               tone={isUser ? "onPrimary" : "default"}
                             />
+                            {toolParts.length === 0 ? (
+                              <>
+                                {isUser ? (
+                                  <MessageRetryButton
+                                    disabled={busy}
+                                    onRetry={() => retryFromMessage(index)}
+                                    tone="onPrimary"
+                                  />
+                                ) : null}
+                                <MessageRewindButton
+                                  disabled={busy}
+                                  onRewind={() => rewindToMessage(index)}
+                                  tone={isUser ? "onPrimary" : "default"}
+                                />
+                              </>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>

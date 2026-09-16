@@ -29,6 +29,7 @@ type Props = {
   id: string;
   name: string;
   placeholder: string;
+  /** Blocks send only — draft editing and image attach stay available. */
   disabled?: boolean;
   textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
   scope: string;
@@ -308,7 +309,6 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             }
             placeholder={placeholder}
             className="min-h-28 flex-1 resize-y text-base leading-relaxed md:min-h-32"
-            disabled={disabled}
             onPaste={(event) => {
               const files = Array.from(event.clipboardData.items)
                 .filter(
@@ -373,7 +373,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               type="button"
               variant="outline"
               size="sm"
-              disabled={disabled || uploading || images.length >= 9}
+              disabled={uploading || images.length >= 9}
               onClick={() => fileInputRef.current?.click()}
             >
               <ImagePlus />
@@ -383,6 +383,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               type="submit"
               size="sm"
               disabled={disabled || uploading || (!input.trim() && !images.length)}
+              title={disabled ? "模型回复完成后再发送" : undefined}
             >
               <SendHorizontal />
               发送
