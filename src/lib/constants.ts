@@ -1,5 +1,13 @@
 /** Dev / production HTTP listen port */
-export const APP_PORT = 3432;
+export const APP_PORT = 1314;
+
+/**
+ * Shared agent chat column — fills the main panel width (equal side padding only).
+ */
+export const CHAT_COLUMN_CLASS = "mx-auto w-full";
+
+/** Mirrored bubble width: assistant left blank ≈ user right blank within the column. */
+export const CHAT_BUBBLE_MAX_CLASS = "max-w-[min(92%,100%)]";
 
 /**
  * Max Agent / Steward Messages injected into each LLM prompt.

@@ -12,10 +12,17 @@ import {
   buildStewardTools,
 } from "@/lib/agent-tools";
 import { getCodexModelOptions, resolveCodexModel } from "@/lib/codex-config";
-import { buildProjectAgentSystemPrompt } from "@/lib/project-agent";
-import { buildStewardSystemPrompt } from "@/lib/steward";
-import { getProject, getSkill, listAgentMessages, listRequiredRules, listRequiredSkills, listSkillsByRecentUse, listStewardMessages, markSkillsUsed, syncCodexMessages } from "@/lib/db";
+import {
+  buildProjectAgentSystemPrompt,
+  buildProjectAgentTurnSnapshot,
+} from "@/lib/project-agent";
+import {
+  buildStewardSystemPrompt,
+  buildStewardTurnSnapshot,
+} from "@/lib/steward";
+import { getProject, getRule, getSkill, listAgentMessages, listRequiredRules, listRequiredSkills, listSkillsByRecentUse, listStewardMessages, markSkillsUsed, syncCodexMessages } from "@/lib/db";
 import { extractSkillCommands, normalizeSkillCommand, skillCommandName } from "@/lib/skill-commands";
+import { partsFromStoredMessage } from "@/lib/chat-message-parts";
 import type { CodexCatalogModel, CodexState } from "@/lib/codex-types";
 import type { MessageImage } from "@/lib/types";
 
@@ -23,7 +30,7 @@ const stateDir = path.join(
   process.env.XDG_STATE_HOME || path.join(homedir(), ".local/state"),
   "progress-codex",
 );
-const serviceVersion = 19;
+const serviceVersion = 29;
 let launching: Promise<void> | undefined;
 async function credentials() {
   await fs.mkdir(stateDir, { recursive: true, mode: 0o700 });
@@ -129,17 +136,13 @@ async function rawState(scope: string) {
   return codexCall("init", { scope, messages: rows.map(m => ({
     id: m.id,
     role: m.role,
-    parts: [
-      ...m.skills.map((skill) => ({ type: "skill", ...skill })),
-      ...m.images.map((image) => ({ type: "image", ...image })),
-      ...(m.content ? [{ type: "text", text: m.content }] : []),
-    ],
+    parts: partsFromStoredMessage(m),
   })) });
 }
 export async function getCodexState(scope: string) {
   let state = await rawState(scope);
   for (const req of state.requests) {
-    if (req.method === "item/tool/call" && ["getSkill", "getRule"].includes(String(req.params.tool))) {
+    if (req.method === "item/tool/call" && ["getSkill", "getRule", "webSearch", "fetchPages", "fetchUrl", "deepRadarStart", "deepRadarList", "deepRadarStatus", "deepRadarProgress", "deepRadarReport", "deepRadarAct"].includes(String(req.params.tool))) {
       try { state = await respond(scope, String(req.id), true); } catch { /* Another request may have claimed it. */ }
     }
   }
@@ -150,6 +153,9 @@ export async function getCodexState(scope: string) {
   return state;
 }
 const toolsFor = (scope: string) => scope === "steward" ? buildStewardTools() : buildProjectAgentTools(scope);
+function hostOf(url: string) {
+  try { return new URL(url).hostname; } catch { return ""; }
+}
 function explicitSkills(text: string) {
   const requested = new Set(extractSkillCommands(text).map(normalizeSkillCommand));
   if (requested.size === 0) return [];
@@ -176,6 +182,7 @@ function formatInjectedLibraryBlock(
     "",
     title,
     intro,
+    "界面会用标签展示已挂载项；回答正文不要在开头复述它们的名称/摘要清单，直接按正文执行。",
     ...items.map(
       (item) => `\n### ${item.name}\n${item.description}\n\n${item.body}`,
     ),
@@ -190,13 +197,20 @@ export async function startCodex(scope: string, text: string, rawImages: unknown
   ).slice(0, 9);
   if (!text?.trim() && !images.length) throw new Error("消息或图片不能为空");
   const tools = Object.entries(toolsFor(scope)).map(([name, tool]) => ({ type: "function", name, description: tool.description || name, inputSchema: z.toJSONSchema(tool.inputSchema as z.ZodType) }));
+  const toolsKey = tools.map((tool) => tool.name).sort().join("|");
   const required = listRequiredSkills();
   const explicit = explicitSkills(text).filter(
     (skill) => skill.usageMode !== "required",
   );
   const selectedSkills = mergeSkillsById(required, explicit);
-  const requiredRules = scope === "steward" ? listRequiredRules() : [];
+  // Standing constraints apply to every agent surface, not only Steward.
+  const requiredRules = listRequiredRules();
   const baseInstructions = scope === "steward" ? buildStewardSystemPrompt() : buildProjectAgentSystemPrompt(scope);
+  const rulesBlock = formatInjectedLibraryBlock(
+    "=== 必载规则（必须使用，每轮自动注入） ===",
+    "以下规则为「必须使用」。本轮回答必须遵守其正文；若与用户请求冲突，应说明冲突，不能静默忽略。",
+    requiredRules,
+  );
   const libraryInstructions =
     formatInjectedLibraryBlock(
       "=== 必载技能（必须使用，每轮自动注入） ===",
@@ -208,24 +222,44 @@ export async function startCodex(scope: string, text: string, rawImages: unknown
       "用户通过 /技能名 明确要求本轮使用以下技能。必须按技能正文完成接下来的行动；若技能与请求冲突，应说明冲突，不能静默忽略。",
       explicit,
     ) +
-    formatInjectedLibraryBlock(
-      "=== 必载规则（必须使用，每轮自动注入） ===",
-      "以下规则为「必须使用」。本轮回答必须遵守其正文；若与用户请求冲突，应说明冲突，不能静默忽略。",
-      requiredRules,
-    );
+    rulesBlock;
   const instructions = baseInstructions + libraryInstructions;
+  const libraryKey = [
+    ...required.map((item) => `skill:${item.id}`),
+    ...explicit.map((item) => `skill:${item.id}`),
+    ...requiredRules.map((item) => `rule:${item.id}`),
+  ]
+    .sort()
+    .join("|");
   const model = await resolveCodexModel(modelId, await safeCodexModels());
+  const turnSnapshot =
+    scope === "steward"
+      ? buildStewardTurnSnapshot()
+      : buildProjectAgentTurnSnapshot(scope);
+  const turnLibraryPrefix = [rulesBlock.trim(), turnSnapshot.trim()]
+    .filter(Boolean)
+    .join("\n\n");
   const result = await codexCall("start", {
     scope,
     text,
     images,
     retry,
     tools,
+    toolsKey,
     instructions,
+    // Turn-level copy so resumed threads cannot drop standing rules or stale snapshots.
+    turnLibraryPrefix: turnLibraryPrefix || undefined,
+    libraryKey,
     skills: selectedSkills.map((skill) => ({
       id: skill.id,
       name: skill.name,
       command: skillCommandName(skill.name),
+      description: skill.description,
+    })),
+    rules: requiredRules.map((rule) => ({
+      id: rule.id,
+      name: rule.name,
+      description: rule.description,
     })),
     modelId: model.id,
     model: model.model,
@@ -299,7 +333,10 @@ export async function respond(scope: string, id: string, approved: boolean, answ
   }
 
   let result: unknown;
-  let usedSkill: { id: string; name: string; command: string } | undefined;
+  let usedSkill: { id: string; name: string; command: string; description?: string } | undefined;
+  let usedRule: { id: string; name: string; description?: string } | undefined;
+  let usedSearch: Record<string, unknown> | undefined;
+  let usedRadar: { sessionId: string; title: string; url: string; reportUrl: string } | undefined;
   if (req.method === "item/tool/call") {
     const name = String(req.params.tool);
     const tool = toolsFor(scope)[name];
@@ -332,8 +369,119 @@ export async function respond(scope: string, id: string, approved: boolean, answ
             id: skill.id,
             name: skill.name,
             command: skillCommandName(skill.name),
+            description: skill.description,
           };
           markSkillsUsed([skill.id]);
+        }
+      }
+      if (name === "getRule") {
+        const ruleId = String((parsedInput as { ruleId?: unknown }).ruleId || "");
+        const rule = getRule(ruleId);
+        if (rule) {
+          usedRule = {
+            id: rule.id,
+            name: rule.name,
+            description: rule.description,
+          };
+        }
+      }
+      if (name === "webSearch" && output && typeof output === "object") {
+        const data = output as {
+          searchId?: string;
+          query?: string;
+          sources?: string[];
+          hits?: Array<{ id?: string; source?: string; title?: string; url?: string; snippet?: string }>;
+        };
+        if (data.searchId && data.query && Array.isArray(data.hits)) {
+          usedSearch = {
+            id: data.searchId,
+            query: data.query,
+            sources: Array.isArray(data.sources) ? data.sources : [],
+            hits: data.hits
+              .filter((hit) => hit && typeof hit.url === "string" && typeof hit.title === "string")
+              .map((hit, index) => ({
+                id: String(hit.id || `${index + 1}`),
+                source: String(hit.source || "web"),
+                title: String(hit.title),
+                url: String(hit.url),
+                ...(hit.snippet ? { snippet: String(hit.snippet) } : {}),
+              })),
+            pages: [],
+          };
+        }
+      }
+      if (name === "fetchPages" && output && typeof output === "object") {
+        const data = output as {
+          searchId?: string;
+          pages?: Array<{
+            url?: string;
+            title?: string;
+            source?: string;
+            text?: string;
+            error?: string;
+            ok?: boolean;
+          }>;
+        };
+        const input = parsedInput as {
+          searchId?: string;
+          items?: Array<{ url?: string; title?: string; source?: string }>;
+        };
+        const searchId = data.searchId || input.searchId || String(req.params.callId || id);
+        usedSearch = {
+          id: searchId,
+          query: "",
+          sources: [],
+          hits: [],
+          pages: (data.pages || [])
+            .filter((page) => page && typeof page.url === "string")
+            .map((page) => ({
+              url: String(page.url),
+              title: String(page.title || page.url),
+              ...(page.source ? { source: String(page.source) } : {}),
+              text: String(page.text || ""),
+              ...(page.error ? { error: String(page.error) } : {}),
+            })),
+        };
+      }
+      if (name === "fetchUrl" && output && typeof output === "object") {
+        const data = output as {
+          searchId?: string;
+          pages?: Array<{ url?: string; finalUrl?: string; title?: string; text?: string; error?: string }>;
+        };
+        const pages = (data.pages || []).filter((page) => page && typeof page.url === "string");
+        usedSearch = {
+          id: data.searchId || String(req.params.callId || id),
+          query: "",
+          sources: [...new Set(pages.map((page) => hostOf(String(page.finalUrl || page.url))).filter(Boolean))],
+          hits: [],
+          phase: "visit",
+          pages: pages.map((page) => ({
+            url: String(page.url),
+            title: String(page.title || page.url),
+            text: String(page.text || ""),
+            ...(page.error ? { error: String(page.error) } : {}),
+          })),
+        };
+      }
+      if (
+        success &&
+        (name === "deepRadarStart" || name === "deepRadarAct") &&
+        output &&
+        typeof output === "object"
+      ) {
+        const data = output as {
+          sessionId?: unknown;
+          title?: unknown;
+          url?: unknown;
+          reportUrl?: unknown;
+        };
+        if (typeof data.sessionId === "string" && data.sessionId) {
+          usedRadar = {
+            sessionId: data.sessionId,
+            title: typeof data.title === "string" ? data.title : "",
+            url: typeof data.url === "string" ? data.url : "",
+            reportUrl: typeof data.reportUrl === "string" ? data.reportUrl : "",
+          };
         }
       }
     } catch (e) { output = { error: e instanceof Error ? e.message : "工具执行失败" }; }
@@ -341,5 +489,5 @@ export async function respond(scope: string, id: string, approved: boolean, answ
   } else if (req.method === "item/tool/requestUserInput") result = { answers: answers || {} };
   else if (req.method === "item/permissions/requestApproval") result = { permissions: req.params.permissions, scope: "turn" };
   else result = { decision: "accept" };
-  return codexCall("respond", { scope, id, result, usedSkill });
+  return codexCall("respond", { scope, id, result, usedSkill, usedRule, usedSearch, usedRadar });
 }

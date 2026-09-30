@@ -4,9 +4,9 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import type { AppSettings, ThemeMode } from "@/lib/settings-types";
+import type { FunctionToolCatalogItem } from "@/lib/agent-tools-types";
 import { applyThemeToDocument } from "@/components/theme-sync";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 
 const THEME_OPTIONS: {
   value: ThemeMode;
@@ -36,8 +36,10 @@ const THEME_OPTIONS: {
 
 export function SettingsPanel({
   initialSettings,
+  tools,
 }: {
   initialSettings: AppSettings;
+  tools: FunctionToolCatalogItem[];
 }) {
   const router = useRouter();
   const [settings, setSettings] = useState(initialSettings);
@@ -117,11 +119,46 @@ export function SettingsPanel({
         ) : null}
       </section>
 
-      <div>
-        <Button type="button" variant="outline" onClick={() => router.back()}>
-          返回
-        </Button>
-      </div>
+      <section className="rounded-xl border bg-muted/20 p-5">
+        <h2 className="text-sm font-semibold">Function tools</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          只读。列表来自当前注册到总管家和项目顾问的工具，新增或删除工具后刷新即可看到。
+        </p>
+        <ul className="mt-4 space-y-3">
+          {tools.map((tool) => (
+            <li key={tool.name} className="rounded-lg border bg-background px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-sm font-medium">{tool.name}</code>
+                {tool.audiences.map((audience) => (
+                  <span
+                    key={audience}
+                    className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                  >
+                    {audience === "steward" ? "总管家" : "项目顾问"}
+                  </span>
+                ))}
+              </div>
+              {tool.description ? (
+                <p className="mt-1.5 text-sm text-muted-foreground">{tool.description}</p>
+              ) : null}
+              {tool.parameters.length ? (
+                <ul className="mt-2 space-y-1">
+                  {tool.parameters.map((param) => (
+                    <li key={param.name} className="text-xs text-muted-foreground">
+                      <code className="text-foreground">{param.name}</code>
+                      <span className="mx-1">{param.type}</span>
+                      {param.required ? <span>必填</span> : <span>可选</span>}
+                      {param.description ? <span> · {param.description}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">无参数</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }

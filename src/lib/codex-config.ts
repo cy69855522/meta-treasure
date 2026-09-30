@@ -87,6 +87,11 @@ async function readConfig() {
   return sources;
 }
 
+function formatModelLabel(providerLabel: string, model: string, prefix?: string) {
+  const base = `${providerLabel} · ${model}`;
+  return prefix ? `${prefix} · ${base}` : base;
+}
+
 function profileOptions(sections: TomlSection[]): CodexModelOption[] {
   return sections
     .filter((section) => section.path[0] === "profiles" && section.path.length === 2)
@@ -100,7 +105,7 @@ function profileOptions(sections: TomlSection[]): CodexModelOption[] {
       const providerLabel = provider?.values.name || providerName || "Codex";
       return [{
         id: `profile:${profile.path[1]}`,
-        label: `${providerLabel} · ${profile.path[1]}`,
+        label: formatModelLabel(providerLabel, model),
         model,
         provider: providerName,
         available: true,
@@ -116,9 +121,10 @@ function configuredDefault(sections: TomlSection[]) {
   const provider = providerName ? findSection(sections, ["model_providers", providerName]) : undefined;
   const headers = providerName ? findSection(sections, ["model_providers", providerName, "http_headers"]) : undefined;
   if (!providerReady(provider, headers)) return [];
+  const providerLabel = provider?.values.name || providerName || "Codex";
   return [{
     id: `config:${root.model}:${providerName || ""}`,
-    label: `配置默认 · ${provider?.values.name || root.model}`,
+    label: formatModelLabel(providerLabel, root.model, "配置默认"),
     model: root.model,
     provider: providerName,
     available: true,
@@ -138,7 +144,7 @@ function profileFileOptions(sources: ConfigSource[], allSections: TomlSection[])
     const providerLabel = provider?.values.name || providerName || "Codex";
     return [{
       id: `profile:${source.name}`,
-      label: `${providerLabel} · ${source.name}`,
+      label: formatModelLabel(providerLabel, root.model),
       model: root.model,
       provider: providerName,
       available: true,
@@ -150,14 +156,22 @@ function profileFileOptions(sources: ConfigSource[], allSections: TomlSection[])
 function catalogOptions(catalog: CodexCatalogModel[]) {
   return catalog
     .filter((model) => Boolean(model.model) && !model.hidden && (!model.inputModalities?.length || model.inputModalities.includes("text")))
-    .map((model) => ({
-      id: `catalog:${model.model}`,
-      label: model.displayName || model.model || "未命名模型",
-      model: model.model || null,
-      provider: null,
-      available: true,
-      detail: model.isDefault ? "Codex 当前默认模型" : model.description || "来自 Codex App Server 模型目录",
-    }));
+    .map((model) => {
+      const id = model.model || "";
+      const displayName = model.displayName?.trim() || "";
+      const label =
+        displayName && displayName !== id && !displayName.includes(id)
+          ? `${displayName} · ${id}`
+          : displayName || id || "未命名模型";
+      return {
+        id: `catalog:${id}`,
+        label,
+        model: model.model || null,
+        provider: null,
+        available: true,
+        detail: model.isDefault ? "Codex 当前默认模型" : model.description || "来自 Codex App Server 模型目录",
+      };
+    });
 }
 
 export async function getCodexModelOptions(catalog: CodexCatalogModel[] = []): Promise<CodexModelOption[]> {

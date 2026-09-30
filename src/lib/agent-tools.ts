@@ -7,7 +7,12 @@ import {
   type AgentToolName,
   type AgentToolScope,
   isAgentToolName,
+  type FunctionToolCatalogItem,
+  type FunctionToolParam,
 } from "@/lib/agent-tools-types";
+import { webSearchTools } from "@/lib/web-search-tools";
+import { webFetchTools } from "@/lib/web-fetch-tools";
+import { deepRadarTools } from "@/lib/deep-radar-tools";
 import {
   countNowTasks,
   countRulesInFolder,
@@ -52,6 +57,8 @@ export type {
   ActionPreview,
   AgentToolName,
   AgentToolScope,
+  FunctionToolCatalogItem,
+  FunctionToolParam,
 } from "@/lib/agent-tools-types";
 export { isAgentToolName } from "@/lib/agent-tools-types";
 
@@ -996,7 +1003,7 @@ function skillReadTools(): ToolSet {
   };
 }
 
-function stewardLibraryTools(): ToolSet {
+function libraryTools(): ToolSet {
   return {
     ...skillReadTools(),
     createSkillFolder: tool({
@@ -1562,7 +1569,10 @@ export function buildProjectAgentTools(projectId: string): ToolSet {
   return {
     ...noteTools("project", projectId),
     ...taskTools("project", projectId),
-    ...skillReadTools(),
+    ...libraryTools(),
+    ...webSearchTools(),
+    ...webFetchTools(),
+    ...deepRadarTools(),
   };
 }
 
@@ -1571,6 +1581,75 @@ export function buildStewardTools(): ToolSet {
     ...noteTools("steward"),
     ...taskTools("steward"),
     ...stewardProjectTools(),
-    ...stewardLibraryTools(),
+    ...libraryTools(),
+    ...webSearchTools(),
+    ...webFetchTools(),
+    ...deepRadarTools(),
   };
+}
+
+function schemaType(prop: Record<string, unknown>): string {
+  if (Array.isArray(prop.enum) && prop.enum.length) {
+    return prop.enum.map((item) => String(item)).join(" | ");
+  }
+  if (prop.type === "array") {
+    const items =
+      prop.items && typeof prop.items === "object"
+        ? schemaType(prop.items as Record<string, unknown>)
+        : "any";
+    return `${items}[]`;
+  }
+  if (typeof prop.type === "string") return prop.type;
+  if (Array.isArray(prop.anyOf)) return "union";
+  return "any";
+}
+
+function parametersFromSchema(schema: unknown): FunctionToolParam[] {
+  if (!schema || typeof schema !== "object") return [];
+  const record = schema as {
+    properties?: Record<string, Record<string, unknown>>;
+    required?: string[];
+  };
+  const required = new Set(record.required || []);
+  return Object.entries(record.properties || {}).map(([name, prop]) => ({
+    name,
+    type: schemaType(prop),
+    description: typeof prop.description === "string" ? prop.description : "",
+    required: required.has(name),
+  }));
+}
+
+/** Live catalog of function tools currently registered on Steward and Project Agent. */
+export function listFunctionToolCatalog(): FunctionToolCatalogItem[] {
+  const groups = [
+    { audience: "steward" as const, tools: buildStewardTools() },
+    { audience: "project" as const, tools: buildProjectAgentTools("catalog") },
+  ];
+  const merged = new Map<string, FunctionToolCatalogItem>();
+  for (const group of groups) {
+    for (const [name, entry] of Object.entries(group.tools)) {
+      const existing = merged.get(name);
+      if (existing) {
+        if (!existing.audiences.includes(group.audience)) {
+          existing.audiences.push(group.audience);
+        }
+        continue;
+      }
+      let parameters: FunctionToolParam[] = [];
+      try {
+        parameters = parametersFromSchema(
+          z.toJSONSchema(entry.inputSchema as z.ZodType),
+        );
+      } catch {
+        parameters = [];
+      }
+      merged.set(name, {
+        name,
+        description: entry.description || "",
+        audiences: [group.audience],
+        parameters,
+      });
+    }
+  }
+  return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name));
 }

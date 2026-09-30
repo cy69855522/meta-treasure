@@ -34,6 +34,7 @@ function DialogContent({
       <DialogPrimitive.Backdrop
         className={cn(
           "fixed inset-0 z-50 bg-black/40 data-ending-style:opacity-0 data-starting-style:opacity-0",
+          "data-ending-style:pointer-events-none data-closed:pointer-events-none",
           overlayClassName,
         )}
       />

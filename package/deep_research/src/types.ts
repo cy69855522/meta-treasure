@@ -1,9 +1,20 @@
-export type SearchSource = "wechat" | "zhihu";
+export type {
+  SearchSource,
+  SearchSourceGroup,
+  SearchSourceMeta,
+} from "./catalog";
+export {
+  ALL_SEARCH_SOURCES,
+  DEFAULT_SEARCH_SOURCES,
+  SEARCH_SOURCE_CATALOG,
+  SOURCE_TITLE,
+  isSearchSource,
+  pickQueryForSource,
+  queryLangForSource,
+} from "./catalog";
+import type { SearchSource } from "./catalog";
 
-/** Numeric engagement / stats for display (Chinese labels as keys). */
 export type SearchMetrics = Record<string, number>;
-
-/** Extra scalar metadata for display (Chinese labels as keys). */
 export type SearchMeta = Record<string, string>;
 
 export type SearchHit = {
@@ -14,26 +25,21 @@ export type SearchHit = {
   author?: string;
   publishedAt?: string;
   rawId?: string;
-  /** Cover / thumbnail when available. */
   coverUrl?: string;
-  /** e.g. article / question / answer */
   contentType?: string;
-  /** Likes, comments, favorites, views, etc. when the API returns them. */
   metrics?: SearchMetrics;
-  /** Other displayable metadata (excluding title/url/snippet already shown). */
   meta?: SearchMeta;
 };
 
 export type GroupedSearchResult = {
   keyword: string;
-  groups: Record<SearchSource, SearchHit[]>;
+  groups: Partial<Record<SearchSource, SearchHit[]>>;
   errors?: Partial<Record<SearchSource, string>>;
 };
 
 export type DeepResearchAgentOptions = {
   apiKey?: string;
   baseUrl?: string;
-  /** Default 45000 — WeChat search can be slow. */
   timeoutMs?: number;
 };
 

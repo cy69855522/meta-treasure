@@ -49,7 +49,7 @@ export function PiggyBankDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[min(85vh,48rem)] min-h-[min(70vh,32rem)] w-[calc(100%-2rem)] max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PiggyBank className="size-4" />
@@ -63,7 +63,7 @@ export function PiggyBankDialog({
         {projects.length === 0 ? (
           <p className="text-sm text-muted-foreground">储蓄罐是空的。</p>
         ) : (
-          <ul className="max-h-80 space-y-2 overflow-y-auto">
+          <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto">
             {projects.map((project) => (
               <li
                 key={project.id}

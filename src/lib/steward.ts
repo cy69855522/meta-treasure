@@ -110,6 +110,29 @@ function buildInboxBlock(): string {
   return inbox.map((t) => `- ${t.title} (id=${t.id})`).join("\n");
 }
 
+/** Fresh DB snapshot for each turn — Codex may keep stale developerInstructions on resume. */
+export function buildStewardTurnSnapshot(): string {
+  return [
+    "=== 本轮最新工作区快照（每轮发消息前从数据库刷新；优先于历史对话与旧指令） ===",
+    "若下文与历史说法冲突，以下方为准。",
+    "",
+    "=== 收件箱 ===",
+    buildInboxBlock(),
+    "",
+    "=== 活跃项目组合快照（侧边栏顺序） ===",
+    buildProjectPortfolioBlock(),
+    "",
+    "=== 项目储蓄罐（完整看板 + 笔记；不在侧边栏） ===",
+    buildPiggyBankBlock(),
+    "",
+    "=== 技能库目录（folder/skill id + name / description，无正文） ===",
+    buildSkillsCatalogBlock(),
+    "",
+    "=== 规则库目录（folder/rule id + name / description，无正文） ===",
+    buildRulesCatalogBlock(),
+  ].join("\n");
+}
+
 export function buildStewardSystemPrompt(): string {
   const stewardNotes = listStewardMemoryNotes();
   const stewardNotesBlock =
@@ -141,6 +164,9 @@ export function buildStewardSystemPrompt(): string {
     "储蓄罐内项目不参与 Project Order，也不出现在侧边栏活跃列表；但其看板与长期笔记仍出现在下方「项目储蓄罐」快照中，可据此讨论是否移出或暂缓。",
     "技能库：getSkill（只读，含正文）/ createSkillFolder / updateSkillFolder / deleteSkillFolder / createSkill / updateSkill / deleteSkill。",
     "规则库：getRule（只读，含正文）/ createRuleFolder / updateRuleFolder / deleteRuleFolder / createRule / updateRule / deleteRule。",
+    "网页搜索（两阶段）：先 webSearch（sources=wechat|baidu|google，可多选）拿到候选链接；再 fetchPages 批量抽取需要的页面正文。不要假装访问未抽取的 URL。",
+    "访问网页：用户消息里给出具体网址、或让你看/查某个链接时，直接调用 fetchUrl 读取该网址正文，不要改用 webSearch 搜 site:。读取失败就如实说明失败原因（如被站点拦截、超时），不要凭记忆编造页面内容。",
+    "Deep Radar：需要完整深度研究时用 deepRadarStart 传入需求（会新建会话并自动开跑）。气泡底部会显示进度条。需要数字进度时用 deepRadarProgress（与进度条同一接口）；deepRadarStatus 看摘要，deepRadarReport 读报告，deepRadarList 列已有会话，deepRadarAct 追加消息或停止。返回的 url / reportUrl 必须原样贴进回复（这是打开 Deep Radar 并定位到该报告的链接，允许包含其中的路径）。研究未完成时不要编造报告内容。进度已完成或失败后不要反复查询。",
     ...SKILL_LOAD_PROMPT_LINES,
     ...RULE_LOAD_PROMPT_LINES,
     "创建或修改 Skill/Rule 时：严格遵循用户指令；用户给出的原文或「复制」请求应尽量原样保留 body，不要套固定 SKILL.md/RULE 模板，也不要擅自大幅改写。",

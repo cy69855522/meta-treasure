@@ -44,6 +44,20 @@ export const AGENT_TOOL_NAMES = [
 
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
 
+export type FunctionToolParam = {
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+};
+
+export type FunctionToolCatalogItem = {
+  name: string;
+  description: string;
+  audiences: Array<"steward" | "project">;
+  parameters: FunctionToolParam[];
+};
+
 export function isAgentToolName(name: string): name is AgentToolName {
   return (AGENT_TOOL_NAMES as readonly string[]).includes(name);
 }

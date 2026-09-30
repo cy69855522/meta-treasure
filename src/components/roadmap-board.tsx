@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCorners,
   useSensor,
   useSensors,
@@ -20,7 +21,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useDroppable } from "@dnd-kit/core";
-import { Plus } from "lucide-react";
+import { GripVertical, Plus } from "lucide-react";
 import type { Lane, Project, Task } from "@/lib/types";
 import {
   LANE_LABELS,
@@ -29,7 +30,6 @@ import {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useMounted } from "@/hooks/use-mounted";
-import { useMediaQuery } from "@/hooks/use-media-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { InboxCapture } from "@/components/inbox-capture";
@@ -49,25 +49,34 @@ function TaskCard({
   onOpen,
   onComplete,
   onDelete,
+  dragHandle,
 }: {
   task: Task;
   dragging?: boolean;
   onOpen: (task: Task) => void;
   onComplete?: (task: Task) => void;
   onDelete?: (task: Task) => void;
+  dragHandle?: {
+    attributes: object;
+    listeners?: object;
+  };
 }) {
+  const showFooter = Boolean(dragHandle || onComplete || onDelete);
+
   return (
     <div
       className={cn(
-        "w-full rounded-lg border bg-background p-3 text-left shadow-sm transition-shadow hover:shadow-md",
+        "relative w-full rounded-lg border bg-background p-3 text-left shadow-sm transition-shadow hover:shadow-md",
         dragging && "opacity-80 shadow-lg",
+        dragHandle && "touch-none",
       )}
+      {...(dragHandle?.attributes as object)}
+      {...(dragHandle?.listeners as object)}
     >
       <button
         type="button"
         onClick={() => onOpen(task)}
-        onPointerDown={(e) => e.stopPropagation()}
-        className="w-full touch-manipulation text-left"
+        className="w-full cursor-grab text-left active:cursor-grabbing"
       >
         <p className="text-sm font-medium leading-snug">{task.title}</p>
         <TaskTimestamps task={task} compact />
@@ -83,34 +92,53 @@ function TaskCard({
           </div>
         ) : null}
       </button>
-      {onComplete || onDelete ? (
-        <div className="mt-2 flex justify-end gap-1.5">
-          {onComplete ? (
-            <Button
-              size="xs"
-              variant="secondary"
-              onClick={(e) => {
-                e.stopPropagation();
-                onComplete(task);
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
+      {showFooter ? (
+        <div className="mt-2 flex items-center gap-1.5">
+          {dragHandle ? (
+            <span
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground"
+              aria-hidden
+              title="拖动排序或切换泳道"
             >
-              完成
-            </Button>
-          ) : null}
-          {onDelete ? (
-            <Button
-              size="xs"
-              variant="destructive"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(task);
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              删除
-            </Button>
-          ) : null}
+              <GripVertical className="size-3.5" />
+            </span>
+          ) : (
+            <span className="size-7 shrink-0" aria-hidden />
+          )}
+          <button
+            type="button"
+            className="h-7 min-w-0 flex-1 cursor-pointer"
+            aria-label={`编辑「${task.title}」`}
+            onClick={() => onOpen(task)}
+          />
+          <div className="flex shrink-0 gap-1.5">
+            {onComplete ? (
+              <Button
+                size="xs"
+                variant="secondary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onComplete(task);
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                完成
+              </Button>
+            ) : null}
+            {onDelete ? (
+              <Button
+                size="xs"
+                variant="destructive"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(task);
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                删除
+              </Button>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>
@@ -130,6 +158,11 @@ function SortableTaskCard({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id, data: { lane: task.lane } });
+  const suppressOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (isDragging) suppressOpenRef.current = true;
+  }, [isDragging]);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -140,15 +173,20 @@ function SortableTaskCard({
     <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
-      {...listeners}
       className={cn(isDragging && "opacity-40")}
     >
       <TaskCard
         task={task}
-        onOpen={onOpen}
+        onOpen={() => {
+          if (suppressOpenRef.current) {
+            suppressOpenRef.current = false;
+            return;
+          }
+          onOpen(task);
+        }}
         onComplete={onComplete}
         onDelete={onDelete}
+        dragHandle={{ attributes, listeners }}
       />
     </div>
   );
@@ -295,9 +333,8 @@ export function RoadmapBoard({
 }) {
   const router = useRouter();
   const mounted = useMounted();
-  const { matches: isDesktop } = useMediaQuery("(min-width: 768px)");
-  // PointerSensor on touch devices often swallows taps on cards/buttons.
-  const enableDnd = mounted && isDesktop;
+  // Long-press / short-move activation keeps taps working on touch and mouse.
+  const enableDnd = mounted;
   const [tasks, setTasks] = useState(initialTasks);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selected, setSelected] = useState<Task | null>(null);
@@ -341,7 +378,10 @@ export function RoadmapBoard({
   }
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 220, tolerance: 8 },
+    }),
   );
 
   const grouped = useMemo(() => {

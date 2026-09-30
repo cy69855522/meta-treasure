@@ -51,6 +51,75 @@ export type InvokedSkill = {
   id: string;
   name: string;
   command: string;
+  description?: string;
+};
+
+export type InvokedRule = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+export type InvokedSearchHit = {
+  id: string;
+  source: string;
+  title: string;
+  url: string;
+  snippet?: string;
+};
+
+export type InvokedSearchPage = {
+  url: string;
+  title: string;
+  source?: string;
+  text: string;
+  error?: string;
+};
+
+/** One webSearch (+ optional later fetchPages), or one direct fetchUrl visit, attached to an assistant message. */
+export type InvokedSearch = {
+  id: string;
+  query: string;
+  sources: string[];
+  hits: InvokedSearchHit[];
+  pages?: InvokedSearchPage[];
+  /** Streaming / lifecycle status for inline bubble bars. */
+  status?: "searching" | "fetching" | "done" | "error";
+  phase?: "search" | "fetch" | "visit";
+  callId?: string;
+  error?: string;
+  /**
+   * Character offset into concatenated text parts where this search bar sits.
+   * Used to rebuild interleaved text→search→text after DB round-trip.
+   */
+  at?: number;
+};
+
+/** Deep Radar research job attached to an assistant bubble. */
+export type InvokedRadar = {
+  sessionId: string;
+  title: string;
+  url: string;
+  reportUrl: string;
+};
+
+/** Live Deep Radar progress returned by deepRadarProgress and the bubble poll. */
+export type DeepRadarProgress = {
+  sessionId: string;
+  title: string;
+  phase: string;
+  phaseLabel: string;
+  label: string;
+  busy: boolean;
+  error: string | null;
+  rounds: number;
+  maxRounds: number;
+  reportWrite: { turn: number; maxTurns: number } | null;
+  hasReport: boolean;
+  percent: number | null;
+  terminal: "running" | "done" | "failed";
+  url: string;
+  reportUrl: string;
 };
 
 export type MessageImage = { id: string; name: string; url: string; path: string; mimeType: string };
@@ -79,6 +148,9 @@ export type AgentMessage = {
   role: AgentMessageRole;
   content: string;
   skills: InvokedSkill[];
+  rules: InvokedRule[];
+  searches: InvokedSearch[];
+  radars: InvokedRadar[];
   images: MessageImage[];
   createdAt: string;
 };
@@ -159,6 +231,9 @@ export type StewardMessage = {
   role: AgentMessageRole;
   content: string;
   skills: InvokedSkill[];
+  rules: InvokedRule[];
+  searches: InvokedSearch[];
+  radars: InvokedRadar[];
   images: MessageImage[];
   createdAt: string;
 };

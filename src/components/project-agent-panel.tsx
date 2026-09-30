@@ -4,10 +4,18 @@ import { useCodexChat } from "@/hooks/use-codex-chat";
 import { CodexControls, CodexSettings } from "@/components/codex-controls";
 import {
   isSkillMessagePart,
+  isRuleMessagePart,
   isImageMessagePart,
   type UIMessage,
 } from "@/lib/codex-types";
-import { LoaderCircle, MessageSquare, NotebookPen, X } from "lucide-react";
+import {
+  LoaderCircle,
+  MessageSquare,
+  NotebookPen,
+  PanelTop,
+  PanelTopClose,
+  X,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -22,12 +30,18 @@ import { MemoryNotesStrip } from "@/components/memory-notes-strip";
 import { MessageCopyButton } from "@/components/message-copy-button";
 import { MessageRetryButton } from "@/components/message-retry-button";
 import { MessageRewindButton } from "@/components/message-rewind-button";
-import { MessageSkillTags } from "@/components/message-skill-tags";
+import { MessageLibraryTags } from "@/components/message-skill-tags";
+import {
+  AssistantTimeline,
+  firstTextPreamble,
+} from "@/components/assistant-timeline";
 import { MessageImages } from "@/components/message-images";
+import { ResearchProgressBars } from "@/components/research-progress-bar";
 import { Button } from "@/components/ui/button";
 import { useStickToBottomScroll } from "@/hooks/use-stick-to-bottom-scroll";
 import { useLoadOlderMessages } from "@/hooks/use-load-older-messages";
-import { CHAT_HISTORY_PAGE_SIZE } from "@/lib/constants";
+import { CHAT_HISTORY_PAGE_SIZE, CHAT_COLUMN_CLASS, CHAT_BUBBLE_MAX_CLASS } from "@/lib/constants";
+import { partsFromStoredMessage } from "@/lib/chat-message-parts";
 import type { AgentMemoryNote, AgentMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -35,11 +49,7 @@ function toUIMessages(messages: AgentMessage[]): UIMessage[] {
   return messages.map((m) => ({
     id: m.id,
     role: m.role,
-    parts: [
-      ...(m.skills || []).map((skill) => ({ type: "skill" as const, ...skill })),
-      ...(m.images || []).map((image) => ({ type: "image" as const, ...image })),
-      ...(m.content ? [{ type: "text" as const, text: m.content }] : []),
-    ],
+    parts: partsFromStoredMessage(m),
   }));
 }
 
@@ -78,7 +88,8 @@ export function ProjectAgentPanel({
   children,
 }: Props) {
   const router = useRouter();
-  const { headerVisible, setAgentSessionActive } = useAgentChrome();
+  const { headerVisible, toggleHeader, setAgentSessionActive } =
+    useAgentChrome();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"chat" | "notes">("chat");
   const [notes, setNotes] = useState(initialNotes);
@@ -381,7 +392,7 @@ export function ProjectAgentPanel({
           <header
             className={cn(
               "shrink-0 items-start justify-between gap-3 border-b border-border px-6 py-4",
-              headerVisible ? "flex" : "hidden md:flex",
+              headerVisible ? "flex" : "hidden",
             )}
           >
             <div className="min-w-0">
@@ -397,18 +408,20 @@ export function ProjectAgentPanel({
                 Codex · 保留会话上下文；权限请求在对话中确认
               </p>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => setOpen(false)}
-              aria-label="关闭顾问"
-            >
-              <X />
-            </Button>
           </header>
 
-          <div className="flex shrink-0 gap-1 border-b border-border px-6 py-2">
+          <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-6">
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              onClick={toggleHeader}
+              aria-label={headerVisible ? "隐藏标题栏" : "展开标题栏"}
+              aria-pressed={headerVisible}
+              title={headerVisible ? "隐藏标题栏" : "展开标题栏"}
+            >
+              {headerVisible ? <PanelTopClose /> : <PanelTop />}
+            </Button>
             <Button
               type="button"
               size="sm"
@@ -427,20 +440,24 @@ export function ProjectAgentPanel({
               <NotebookPen />
               长期笔记
             </Button>
-            {/* Keep close reachable when the title header is collapsed on mobile. */}
-            {!headerVisible ? (
+            <div className="ml-auto flex items-center gap-1">
+              <CodexSettings
+                state={codexState}
+                action={codexAction}
+                modelOptions={modelOptions}
+                onModelChange={setModel}
+              />
               <Button
                 type="button"
                 variant="ghost"
-                size="icon"
-                className="md:hidden"
+                size="icon-sm"
                 onClick={() => setOpen(false)}
                 aria-label="关闭顾问"
+                title="关闭顾问"
               >
                 <X />
               </Button>
-            ) : null}
-            <CodexSettings state={codexState} action={codexAction} modelOptions={modelOptions} onModelChange={setModel} />
+            </div>
           </div>
 
           {tab === "chat" ? (
@@ -449,7 +466,10 @@ export function ProjectAgentPanel({
                 <div
                 ref={scrollRef}
                 onScroll={onScroll}
-                className="mx-auto min-h-0 w-full max-w-6xl flex-1 space-y-4 overflow-y-auto px-6 py-5 md:px-10"
+                className={cn(
+                  "min-h-0 w-full flex-1 space-y-4 overflow-y-auto px-4 py-5 md:px-6",
+                  CHAT_COLUMN_CLASS,
+                )}
                 >
                 {loadingOlder ? (
                   <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
@@ -477,13 +497,17 @@ export function ProjectAgentPanel({
                   const isLast = index === messages.length - 1;
                   const streamingHere =
                     !isUser && isLast && status === "streaming";
-                  const reasoning = message.parts
-                    .filter(
-                      (p): p is { type: "reasoning"; text: string } =>
-                        p.type === "reasoning",
-                    )
-                    .map((p) => p.text)
-                    .join("");
+                  const toolParts = message.parts.filter(isAgentToolPart);
+                  const skillParts = message.parts.filter(isSkillMessagePart);
+                  const ruleParts = message.parts.filter(isRuleMessagePart);
+                  const imageParts = message.parts.filter(isImageMessagePart);
+                  const mountedNames = [
+                    ...skillParts.flatMap((s) => [s.name, s.command]),
+                    ...ruleParts.map((r) => r.name),
+                  ];
+                  const { preamble } = !isUser
+                    ? firstTextPreamble(message.parts, mountedNames, streamingHere)
+                    : { preamble: null };
                   const text = message.parts
                     .filter(
                       (p): p is { type: "text"; text: string } =>
@@ -491,9 +515,6 @@ export function ProjectAgentPanel({
                     )
                     .map((p) => p.text)
                     .join("");
-                  const toolParts = message.parts.filter(isAgentToolPart);
-                  const skillParts = message.parts.filter(isSkillMessagePart);
-                  const imageParts = message.parts.filter(isImageMessagePart);
                   return (
                     <div
                       key={message.id}
@@ -505,9 +526,10 @@ export function ProjectAgentPanel({
                       <div
                         className={cn(
                           "rounded-2xl px-4 py-3 shadow-sm",
+                          CHAT_BUBBLE_MAX_CLASS,
                           isUser
-                            ? "max-w-[min(92%,52rem)] rounded-br-md bg-primary text-primary-foreground"
-                            : "w-full max-w-[min(92%,52rem)] rounded-bl-md bg-muted text-foreground",
+                            ? "rounded-br-md bg-primary text-primary-foreground"
+                            : "w-full rounded-bl-md bg-muted text-foreground",
                         )}
                       >
                         {!isUser ? (
@@ -515,41 +537,58 @@ export function ProjectAgentPanel({
                             顾问
                           </p>
                         ) : null}
-                        {!isUser ? <MessageSkillTags skills={skillParts} /> : null}
+                        {!isUser ? (
+                          <MessageLibraryTags
+                            skills={skillParts}
+                            rules={ruleParts}
+                            preamble={preamble}
+                            streamingPreamble={
+                              streamingHere && Boolean(preamble)
+                            }
+                          />
+                        ) : null}
                         <MessageImages images={imageParts} />
-                        {reasoning ? (
-                          <details className="mb-2 rounded-lg bg-background/50 px-2 py-1.5 text-xs text-muted-foreground">
-                            <summary className="cursor-pointer select-none">
-                              推理过程
-                            </summary>
-                            <div className="mt-1">
-                              <ChatMarkdown
-                                content={reasoning}
-                                variant="assistant"
-                                streaming={streamingHere}
-                              />
+                        {isUser ? (
+                          text || streamingHere ? (
+                            <div className="relative">
+                              {text ? (
+                                <ChatMarkdown
+                                  content={text}
+                                  variant="user"
+                                  streaming={streamingHere}
+                                />
+                              ) : null}
+                              {streamingHere ? (
+                                <span
+                                  aria-hidden
+                                  className="ml-0.5 inline-block h-[1.05em] w-0.5 animate-pulse bg-foreground/70 align-[-0.1em]"
+                                />
+                              ) : null}
                             </div>
-                          </details>
-                        ) : null}
-                        {text || streamingHere ? (
-                          <div className="relative">
-                            {text ? (
-                              <ChatMarkdown
-                                content={text}
-                                variant={isUser ? "user" : "assistant"}
-                                streaming={streamingHere}
-                              />
-                            ) : null}
-                            {streamingHere ? (
-                              <span
-                                aria-hidden
-                                className="ml-0.5 inline-block h-[1.05em] w-0.5 animate-pulse bg-foreground/70 align-[-0.1em]"
-                              />
-                            ) : null}
-                          </div>
-                        ) : null}
+                          ) : null
+                        ) : (
+                          <AssistantTimeline
+                            parts={message.parts}
+                            mountedNames={mountedNames}
+                            streaming={streamingHere}
+                          />
+                        )}
                         {!isUser
-                          ? toolParts.map((part) => (
+                          ? toolParts
+                              .filter((part) => {
+                                const name =
+                                  "toolName" in part &&
+                                  typeof part.toolName === "string"
+                                    ? part.toolName
+                                    : String(part.type).replace(/^tool-/, "");
+                                return (
+                                  name !== "webSearch" &&
+                                  name !== "fetchPages" &&
+                                  name !== "fetchUrl" &&
+                                  !name.startsWith("deepRadar")
+                                );
+                              })
+                              .map((part) => (
                               <AgentToolApprovalCard
                                 key={String(
                                   "toolCallId" in part && part.toolCallId
@@ -561,9 +600,35 @@ export function ProjectAgentPanel({
                                 projectId={projectId}
                                 onRespond={addToolApprovalResponse}
                                 onApplied={onToolApplied}
-                              />
-                            ))
+                          />
+                        ))
                           : null}
+                        {!isUser ? (
+                          <ResearchProgressBars
+                            parts={message.parts}
+                            disabled={busy}
+                            onReadReport={(job) => {
+                              if (busy) return;
+                              clearError();
+                              pinToBottom();
+                              setMessages((prev) =>
+                                rejectPendingApprovalsInMessages(prev),
+                              );
+                              void sendMessage({
+                                text: [
+                                  `请用 deepRadarReport 读取研究会话 ${job.sessionId} 的报告正文，`,
+                                  "提炼关键结论与可行动建议，然后基于这份报告继续和我对话。",
+                                  job.reportUrl
+                                    ? `报告链接：${job.reportUrl}`
+                                    : "",
+                                ]
+                                  .filter(Boolean)
+                                  .join(""),
+                                images: [],
+                              });
+                            }}
+                          />
+                        ) : null}
                         {text.trim() || toolParts.length === 0 ? (
                           <div className="mt-2 flex justify-end gap-0.5">
                             <MessageCopyButton
@@ -595,7 +660,12 @@ export function ProjectAgentPanel({
 
                 {status === "submitted" ? (
                   <div className="flex justify-start">
-                    <div className="flex w-full max-w-[min(92%,52rem)] items-center gap-2 rounded-2xl rounded-bl-md bg-muted px-4 py-3 text-sm text-muted-foreground">
+                    <div
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-2xl rounded-bl-md bg-muted px-4 py-3 text-sm text-muted-foreground",
+                        CHAT_BUBBLE_MAX_CLASS,
+                      )}
+                    >
                       <LoaderCircle className="size-3.5 animate-spin" />
                       模型推理中…
                     </div>
@@ -610,7 +680,7 @@ export function ProjectAgentPanel({
                 </div>
 
                 {thinkingLabel ? (
-                  <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-6 py-2 text-xs text-muted-foreground md:px-10">
+                  <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground md:px-6">
                     <LoaderCircle className="size-3 animate-spin" />
                     <span className="flex-1">{thinkingLabel}</span>
                     {busy ? (

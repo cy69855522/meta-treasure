@@ -1,16 +1,26 @@
-import Link from "next/link";
-import { ArrowRight, Search } from "lucide-react";
+import { ArrowRight, ExternalLink, Flame, Radar, type LucideIcon } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-const TOOLS = [
+const TOOLS: Array<{
+  name: string;
+  url: string;
+  host: string;
+  icon: LucideIcon;
+}> = [
   {
-    href: "/toolbox/deep-research",
-    name: "Deep Research",
-    description: "按关键词搜索微信公众号与知乎，返回链接与元数据（暂不做总结）。",
-    badge: "搜索",
+    name: "Deep Radar",
+    url: "http://localhost:3433/",
+    host: "localhost:3433",
+    icon: Radar,
   },
-] as const;
+  {
+    name: "Hot Radar",
+    url: "http://localhost:1315/",
+    host: "localhost:1315",
+    icon: Flame,
+  },
+];
 
 export default function ToolboxPage() {
   return (
@@ -26,30 +36,36 @@ export default function ToolboxPage() {
       </header>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {TOOLS.map((tool) => (
-          <Link
-            key={tool.href}
-            href={tool.href}
-            className="group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/40"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-muted">
-                <Search className="size-4 text-foreground" />
+        {TOOLS.map((tool) => {
+          const Icon = tool.icon;
+          return (
+            <a
+              key={tool.name}
+              href={tool.url}
+              target="_blank"
+              rel="noreferrer"
+              className="group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/40"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex size-9 items-center justify-center rounded-lg bg-muted">
+                  <Icon className="size-4 text-foreground" />
+                </div>
+                <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                  外链
+                </span>
               </div>
-              <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                {tool.badge}
-              </span>
-            </div>
-            <h2 className="mt-3 text-base font-semibold">{tool.name}</h2>
-            <p className="mt-1 flex-1 text-sm text-muted-foreground">
-              {tool.description}
-            </p>
-            <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-foreground">
-              打开
-              <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
-            </p>
-          </Link>
-        ))}
+              <h2 className="mt-3 text-base font-semibold">{tool.name}</h2>
+              <p className="mt-1 flex-1 text-sm text-muted-foreground">
+                打开 {tool.name} 网页（{tool.host}）。
+              </p>
+              <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-foreground">
+                打开
+                <ExternalLink className="size-3.5 opacity-70" />
+                <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+              </p>
+            </a>
+          );
+        })}
       </div>
     </div>
   );

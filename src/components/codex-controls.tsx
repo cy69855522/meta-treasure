@@ -35,6 +35,10 @@ export function CodexSettings({ state, action, modelOptions, onModelChange }: Se
   const [modelId, setModelId] = useState("");
   const [saving, setSaving] = useState(false);
   const busy = state?.status === "submitted" || state?.status === "streaming";
+  const selectedOption =
+    modelOptions.find((option) => option.id === modelId) ||
+    modelOptions.find((option) => option.id === currentModelId) ||
+    modelOptions[0];
 
   function show() {
     setCwd(state?.cwd || "");
@@ -67,7 +71,28 @@ export function CodexSettings({ state, action, modelOptions, onModelChange }: Se
             </header>
             <div className="space-y-4 p-5">
               <label className="block text-xs font-medium">代码目录<input className="mt-1.5 w-full rounded-md border bg-background px-3 py-2 font-mono text-xs font-normal outline-none" value={cwd} placeholder="/home/knife/项目目录" disabled={saving} onChange={(event) => setCwd(event.target.value)} /></label>
-              <label className="block text-xs font-medium">模型<select className="mt-1.5 w-full rounded-md border bg-background px-3 py-2 text-xs font-normal outline-none" value={modelId} disabled={saving || !modelId} onChange={(event) => setModelId(event.target.value)}>{modelOptions.map((option) => <option key={option.id} value={option.id} disabled={!option.available}>{option.label}</option>)}</select></label>
+              <div>
+                <label className="block text-xs font-medium">模型
+                  <select
+                    className="mt-1.5 w-full rounded-md border bg-background px-3 py-2 text-xs font-normal outline-none"
+                    value={modelId}
+                    disabled={saving || !modelId}
+                    onChange={(event) => setModelId(event.target.value)}
+                  >
+                    {modelOptions.map((option) => (
+                      <option key={option.id} value={option.id} disabled={!option.available}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {selectedOption?.model ? (
+                  <p className="mt-1.5 font-mono text-[11px] text-muted-foreground">
+                    版本：{selectedOption.model}
+                    {selectedOption.detail ? ` · ${selectedOption.detail}` : ""}
+                  </p>
+                ) : null}
+              </div>
             </div>
             <footer className="flex justify-end gap-2 border-t px-5 py-3"><button type="button" className={buttonClass} disabled={saving} onClick={() => setOpen(false)}>取消</button><button type="button" className={cn(buttonClass, "bg-foreground text-background hover:bg-foreground/90")} disabled={saving || !modelId} onClick={() => void saveSettings()}>{saving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}保存</button></footer>
           </section>

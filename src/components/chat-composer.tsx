@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { activeSkillCommand } from "@/lib/skill-commands";
 import { cn } from "@/lib/utils";
 import type { MessageImage } from "@/lib/types";
+import { CHAT_COLUMN_CLASS } from "@/lib/constants";
 
 type SkillOption = {
   id: string;
@@ -181,10 +182,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     return (
       <form
         onSubmit={submit}
-        className="border-t border-border px-6 py-4 md:px-10"
+        className="border-t border-border px-4 py-4 md:px-6"
       >
         {images.length ? (
-          <div className="mx-auto mb-2 flex max-w-6xl flex-wrap gap-2">
+          <div className={cn("mb-2 flex w-full flex-wrap gap-2", CHAT_COLUMN_CLASS)}>
             {images.map((image) => (
               <div
                 key={image.id}
@@ -215,11 +216,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
           </div>
         ) : null}
         {imageError ? (
-          <p className="mx-auto mb-2 max-w-6xl text-xs text-destructive">
+          <p className={cn("mb-2 w-full text-xs text-destructive", CHAT_COLUMN_CLASS)}>
             {imageError}
           </p>
         ) : null}
-        <div className="relative mx-auto flex max-w-6xl items-start gap-3">
+        <div className={cn("relative flex w-full items-start gap-3", CHAT_COLUMN_CLASS)}>
           {skillMenuOpen && slashCommand ? (
             <div
               className="absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-50 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl"

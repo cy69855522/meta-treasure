@@ -139,3 +139,12 @@
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
+
+/*
+ * Base UI Dialog keeps a transparent InternalBackdrop while exiting.
+ * The `inert` attribute stops interacting with the overlay itself, but the
+ * layer still steals taps from the page underneath — especially on mobile.
+ */
+[data-base-ui-inert][inert] {
+  pointer-events: none !important;
+}

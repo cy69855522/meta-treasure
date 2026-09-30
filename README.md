@@ -10,8 +10,8 @@ npm install
 npm run dev
 ```
 
-本机访问：`http://localhost:3432`  
-局域网访问：`http://<电脑IP>:3432`（`dev` / `start` 已监听 `0.0.0.0`）
+本机访问：`http://localhost:1314`  
+局域网访问：`http://<电脑IP>:1314`（`dev` / `start` 已监听 `0.0.0.0`）
 
 快捷键：`C` 打开收件箱快速捕捉。
 

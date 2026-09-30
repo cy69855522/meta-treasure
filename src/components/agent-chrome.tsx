@@ -12,7 +12,7 @@ type AgentChromeContextValue = {
   /** True while Steward page or Project Agent overlay is the active chat UI. */
   agentSessionActive: boolean;
   setAgentSessionActive: (active: boolean) => void;
-  /** Agent title/header strip; default hidden on mobile. */
+  /** Agent title/header strip; default hidden; expand from the tab row. */
   headerVisible: boolean;
   toggleHeader: () => void;
   setHeaderVisible: (visible: boolean) => void;
@@ -26,7 +26,7 @@ export function AgentChromeProvider({
   children: React.ReactNode;
 }) {
   const [agentSessionActive, setAgentSessionActive] = useState(false);
-  // Default hidden — mobile gains chat space; desktop CSS still shows the header.
+  // Default hidden on all viewports — expand from the chat tab row.
   const [headerVisible, setHeaderVisible] = useState(false);
   const toggleHeader = useCallback(() => {
     setHeaderVisible((v) => !v);

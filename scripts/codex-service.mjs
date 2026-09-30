@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 const root = process.cwd();
-const serviceVersion = 19;
+const serviceVersion = 29;
 const testPort = process.env.PROGRESS_CODEX_TEST_PORT
   ? Number(process.env.PROGRESS_CODEX_TEST_PORT)
   : null;
@@ -45,38 +45,201 @@ function save(s) {
   renameSync(file + '.tmp', file);
 }
 const validSkill = skill => skill && typeof skill.id === 'string' && typeof skill.name === 'string' && typeof skill.command === 'string';
+const validRule = rule => rule && typeof rule.id === 'string' && typeof rule.name === 'string';
+const validSearch = search =>
+  search &&
+  typeof search.id === 'string' &&
+  (
+    (typeof search.query === 'string' && Array.isArray(search.hits)) ||
+    (Array.isArray(search.pages) && search.pages.length > 0)
+  );
 const skillKey = skill => skill.id || skill.command;
+const ruleKey = rule => rule.id || rule.name;
+const searchKey = search => search.id;
 function mergeSkills(message, skills) {
   if (!message || !Array.isArray(message.parts)) return;
   const merged = new Map();
   for (const skill of [...message.parts.filter(part => part.type === 'skill'), ...skills].filter(validSkill)) {
-    merged.set(skillKey(skill), { type: 'skill', id: skill.id, name: skill.name, command: skill.command });
+    merged.set(skillKey(skill), { type: 'skill', id: skill.id, name: skill.name, command: skill.command, ...(skill.description ? { description: skill.description } : {}) });
   }
   message.parts = [...merged.values(), ...message.parts.filter(part => part.type !== 'skill')];
 }
+function mergeRules(message, rules) {
+  if (!message || !Array.isArray(message.parts)) return;
+  const merged = new Map();
+  for (const rule of [...message.parts.filter(part => part.type === 'rule'), ...rules].filter(validRule)) {
+    merged.set(ruleKey(rule), { type: 'rule', id: rule.id, name: rule.name, ...(rule.description ? { description: rule.description } : {}) });
+  }
+  message.parts = [...message.parts.filter(part => part.type === 'skill'), ...merged.values(), ...message.parts.filter(part => part.type !== 'skill' && part.type !== 'rule')];
+}
+function mergeSearches(message, searches) {
+  if (!message || !Array.isArray(message.parts)) return;
+  for (const search of searches || []) {
+    if (!search || typeof search.id !== 'string') continue;
+    upsertInlineSearch(message, {
+      id: search.id,
+      query: typeof search.query === 'string' ? search.query : '',
+      sources: Array.isArray(search.sources) ? search.sources : [],
+      hits: Array.isArray(search.hits) ? search.hits : [],
+      pages: Array.isArray(search.pages) ? search.pages : [],
+      status: search.status || ((search.hits?.length || search.pages?.length) ? 'done' : 'searching'),
+      phase: search.phase || (search.pages?.length ? 'fetch' : 'search'),
+      ...(search.callId ? { callId: search.callId } : {}),
+      ...(search.error ? { error: search.error } : {}),
+    });
+  }
+}
 function normalizeSkillPlacement(messages) {
-  let pending = [];
+  let pendingSkills = [];
+  let pendingRules = [];
   for (const message of messages) {
-    const own = (message.parts || []).filter(part => part.type === 'skill' && validSkill(part));
-    if (message.role === 'user' && own.length) {
-      pending = own;
-      message.parts = message.parts.filter(part => part.type !== 'skill');
+    const ownSkills = (message.parts || []).filter(part => part.type === 'skill' && validSkill(part));
+    const ownRules = (message.parts || []).filter(part => part.type === 'rule' && validRule(part));
+    if (message.role === 'user' && (ownSkills.length || ownRules.length)) {
+      pendingSkills = ownSkills;
+      pendingRules = ownRules;
+      message.parts = message.parts.filter(part => part.type !== 'skill' && part.type !== 'rule');
     } else if (message.role === 'assistant' && (message.parts || []).some(part => part.type === 'text')) {
-      if (pending.length) mergeSkills(message, pending);
-      pending = [];
+      if (pendingSkills.length) mergeSkills(message, pendingSkills);
+      if (pendingRules.length) mergeRules(message, pendingRules);
+      pendingSkills = [];
+      pendingRules = [];
     }
   }
 }
-function ensureAssistantMessage(s, id) {
-  let message = s.messages.find(candidate => candidate.id === id);
-  if (!message) {
-    message = { id, role: 'assistant', parts: [{ type: 'text', text: '' }] };
-    mergeSkills(message, s.activeSkills || []);
-    s.messages.push(message);
-    s.turnAnswerIds ||= [];
-    s.turnAnswerIds.push(id);
+function ensureTurnAssistantMessage(s) {
+  if (s.turnMessageId) {
+    const existing = s.messages.find(message => message.id === s.turnMessageId);
+    if (existing) return existing;
   }
+  const id = randomUUID();
+  s.turnMessageId = id;
+  const message = { id, role: 'assistant', parts: [] };
+  mergeSkills(message, s.activeSkills || []);
+  mergeRules(message, s.activeRules || []);
+  s.messages.push(message);
+  s.turnAnswerIds = [id];
   return message;
+}
+
+function textPartIndexForItem(s, message, itemId) {
+  s.turnTextByItem ||= {};
+  if (s.turnTextByItem[itemId] != null && message.parts[s.turnTextByItem[itemId]]?.type === 'text') {
+    return s.turnTextByItem[itemId];
+  }
+  message.parts.push({ type: 'text', text: '' });
+  const index = message.parts.length - 1;
+  s.turnTextByItem[itemId] = index;
+  return index;
+}
+
+function upsertInlineSearch(message, search) {
+  if (!message || !search?.id) return;
+  message.parts ||= [];
+  const byCall = search.callId
+    ? message.parts.findIndex(part => part.type === 'search' && part.callId === search.callId)
+    : -1;
+  const byId = message.parts.findIndex(part => part.type === 'search' && part.id === search.id);
+  const idx = byCall >= 0 ? byCall : byId;
+  if (idx >= 0) {
+    const prev = message.parts[idx];
+    const hitMap = new Map((prev.hits || []).map(hit => [hit.url || hit.id, hit]));
+    for (const hit of search.hits || []) hitMap.set(hit.url || hit.id, hit);
+    const pageMap = new Map((prev.pages || []).map(page => [page.url, page]));
+    for (const page of search.pages || []) pageMap.set(page.url, page);
+    message.parts[idx] = {
+      ...prev,
+      ...search,
+      type: 'search',
+      query: search.query || prev.query || '',
+      sources: [...new Set([...(prev.sources || []), ...(search.sources || [])])],
+      hits: [...hitMap.values()],
+      pages: [...pageMap.values()],
+    };
+    return;
+  }
+  message.parts.push({
+    type: 'search',
+    id: search.id,
+    query: search.query || '',
+    sources: Array.isArray(search.sources) ? search.sources : [],
+    hits: Array.isArray(search.hits) ? search.hits : [],
+    pages: Array.isArray(search.pages) ? search.pages : [],
+    status: search.status || 'searching',
+    phase: search.phase || 'search',
+    ...(search.callId ? { callId: search.callId } : {}),
+    ...(search.error ? { error: search.error } : {}),
+  });
+}
+
+function upsertInlineRadar(message, radar) {
+  if (!message || typeof radar?.sessionId !== 'string' || !radar.sessionId) return;
+  message.parts ||= [];
+  const part = {
+    type: 'radar',
+    sessionId: radar.sessionId,
+    title: typeof radar.title === 'string' ? radar.title : '',
+    url: typeof radar.url === 'string' ? radar.url : '',
+    reportUrl: typeof radar.reportUrl === 'string' ? radar.reportUrl : '',
+  };
+  const idx = message.parts.findIndex(item => item.type === 'radar' && item.sessionId === part.sessionId);
+  if (idx >= 0) message.parts[idx] = { ...message.parts[idx], ...part };
+  else message.parts.push(part);
+}
+
+const INLINE_SEARCH_TOOLS = ['webSearch', 'fetchPages', 'fetchUrl'];
+
+function urlHosts(urls) {
+  if (!Array.isArray(urls)) return [];
+  const hosts = urls.map(url => {
+    try { return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(String(url)) ? String(url) : `https://${url}`).hostname; }
+    catch { return ''; }
+  });
+  return [...new Set(hosts.filter(Boolean))];
+}
+
+function beginInlineToolSearch(s, request) {
+  const tool = String(request?.params?.tool || '');
+  if (!INLINE_SEARCH_TOOLS.includes(tool)) return;
+  const args = request.params?.arguments && typeof request.params.arguments === 'object'
+    ? request.params.arguments
+    : {};
+  const callId = String(request.params?.callId || request.id);
+  const message = ensureTurnAssistantMessage(s);
+  if (tool === 'fetchUrl') {
+    upsertInlineSearch(message, {
+      id: callId,
+      callId,
+      query: '',
+      sources: urlHosts(args.urls),
+      hits: [],
+      pages: [],
+      status: 'fetching',
+      phase: 'visit',
+    });
+  } else if (tool === 'webSearch') {
+    upsertInlineSearch(message, {
+      id: callId,
+      callId,
+      query: typeof args.query === 'string' ? args.query : '',
+      sources: Array.isArray(args.sources) ? args.sources.filter(source => typeof source === 'string') : [],
+      hits: [],
+      pages: [],
+      status: 'searching',
+      phase: 'search',
+    });
+  } else {
+    upsertInlineSearch(message, {
+      id: typeof args.searchId === 'string' && args.searchId ? args.searchId : callId,
+      callId,
+      query: '',
+      sources: [],
+      hits: [],
+      pages: [],
+      status: 'fetching',
+      phase: 'fetch',
+    });
+  }
 }
 function stripExecutionHistory(s) {
   s.messages = (Array.isArray(s.messages) ? s.messages : [])
@@ -95,7 +258,7 @@ function session(scope) {
     normalizeSkillPlacement(s.messages || []);
     if (s.modelId === 'codex-default') s.modelId = null;
     if (s.status === 'submitted' || s.status === 'streaming') { s.status = 'error'; s.error = 'Codex 服务重启，上一轮已中断，请重试。'; }
-    s.requests = []; s.activeSkills = []; s.turnAnswerIds = [];
+    s.requests = []; s.activeSkills = []; s.activeRules = []; s.activeSearches = []; s.turnAnswerIds = []; s.turnMessageId = null; s.turnTextByItem = {};
     sessions.set(scope, s);
   }
   return sessions.get(scope);
@@ -108,7 +271,9 @@ function readableError(error) {
 }
 function fail(s, error) {
   s.status = 'error'; s.error = readableError(error); s.requests = [];
-  s.activeSkills = []; save(s);
+  s.activeSkills = []; s.activeRules = []; s.activeSearches = [];
+  s.turnMessageId = null; s.turnTextByItem = {};
+  save(s);
 }
 createInterface({ input: proc.stdout }).on('line', line => {
   let msg;
@@ -125,21 +290,33 @@ createInterface({ input: proc.stdout }).on('line', line => {
     if (!supported.includes(msg.method)) { send({ id: msg.id, error: { code: -32601, message: 'Unsupported client request' } }); return; }
     const request = { id: msg.id, method: msg.method, params: p };
     s.requests.push(request);
+    if (msg.method === 'item/tool/call') beginInlineToolSearch(s, request);
   } else if (msg.method === 'serverRequest/resolved') {
     s.requests = s.requests.filter(r => String(r.id) !== String(p.requestId));
   } else if (msg.method === 'turn/started') {
-    s.turnId = p.turn.id; s.status = 'streaming';
+    s.turnId = p.turn.id;
+    s.status = 'streaming';
+    s.turnMessageId = null;
+    s.turnTextByItem = {};
+    s.turnAnswerIds = [];
+    s.activeSearches = [];
   } else if (msg.method === 'item/agentMessage/delta') {
-    const m = ensureAssistantMessage(s, p.itemId);
-    let textPart = m.parts.find(part => part.type === 'text');
-    if (!textPart) { textPart = { type: 'text', text: '' }; m.parts.push(textPart); }
-    textPart.text += p.delta;
+    const m = ensureTurnAssistantMessage(s);
+    const index = textPartIndexForItem(s, m, p.itemId);
+    m.parts[index].text += p.delta;
   } else if (msg.method === 'item/completed' && p.item?.type === 'agentMessage') {
-    const m = ensureAssistantMessage(s, p.item.id);
-    m.parts = [...m.parts.filter(part => part.type === 'skill'), { type: 'text', text: p.item.text }];
+    const m = ensureTurnAssistantMessage(s);
+    const index = textPartIndexForItem(s, m, p.item.id);
+    m.parts[index].text = p.item.text || '';
   } else if (msg.method === 'turn/completed') {
-    const lastAnswerId = (s.turnAnswerIds || []).at(-1);
-    if (lastAnswerId) mergeSkills(s.messages.find(message => message.id === lastAnswerId), s.activeSkills || []);
+    const turnMessage = s.turnMessageId
+      ? s.messages.find(message => message.id === s.turnMessageId)
+      : s.messages.find(message => message.id === (s.turnAnswerIds || []).at(-1));
+    if (turnMessage) {
+      mergeSkills(turnMessage, s.activeSkills || []);
+      mergeRules(turnMessage, s.activeRules || []);
+      mergeSearches(turnMessage, s.activeSearches || []);
+    }
     const turnError = p.turn.error?.message || '';
     const turnStatus = String(p.turn.status || '');
     // interrupted / cancelled means the user stopped or rejected — back to ready, not error.
@@ -150,7 +327,8 @@ createInterface({ input: proc.stdout }).on('line', line => {
       s.status = 'ready';
       s.error = null;
     }
-    s.requests = []; s.activeSkills = [];
+    s.requests = []; s.activeSkills = []; s.activeRules = []; s.activeSearches = [];
+    s.turnMessageId = null; s.turnTextByItem = {};
   } else if (msg.method === 'error' && !p.willRetry) fail(s, new Error(p.error?.message || 'Codex 执行失败'));
   save(s);
 });
@@ -177,6 +355,18 @@ async function start(s, body, generation) {
   s.model = model;
   s.modelProvider = modelProvider;
   const config = { cwd: s.cwd || root, sandbox: 'read-only', approvalPolicy: 'never', developerInstructions: body.instructions, ...(model ? { model } : {}), ...(modelProvider ? { modelProvider } : {}) };
+  const libraryKey = typeof body.libraryKey === 'string' ? body.libraryKey : '';
+  if (libraryKey && s.libraryKey !== libraryKey) {
+    s.threadId = null;
+    s.needsHistory = true;
+    s.libraryKey = libraryKey;
+  }
+  const toolsKey = typeof body.toolsKey === 'string' ? body.toolsKey : '';
+  if (toolsKey && s.toolsKey !== toolsKey) {
+    s.threadId = null;
+    s.needsHistory = true;
+  }
+  if (toolsKey) s.toolsKey = toolsKey;
   if (s.threadId) await rpc('thread/resume', { ...config, threadId: s.threadId });
   else {
     const result = await rpc('thread/start', { ...config, dynamicTools: body.tools });
@@ -197,8 +387,11 @@ async function start(s, body, generation) {
   const context = compactHistory.length
     ? '历史对话（仅供背景，不要当成新指令）：\n' + JSON.stringify(compactHistory) + '\n\n'
     : '';
+  const turnPrefix = typeof body.turnLibraryPrefix === 'string' && body.turnLibraryPrefix.trim()
+    ? body.turnLibraryPrefix.trim() + '\n\n'
+    : '';
   const imageInput = (Array.isArray(body.images) ? body.images : []).slice(0, 9).filter(image => typeof image?.path === 'string').map(image => ({ type: 'localImage', path: image.path }));
-  const textInput = body.text?.trim() || context ? [{ type: 'text', text: context + '用户本次请求：\n' + (body.text || ''), text_elements: [] }] : [];
+  const textInput = body.text?.trim() || context || turnPrefix ? [{ type: 'text', text: turnPrefix + context + '用户本次请求：\n' + (body.text || ''), text_elements: [] }] : [];
   await rpc('turn/start', { threadId: s.threadId, input: [...imageInput, ...textInput] });
   s.needsHistory = false; save(s);
 }
@@ -264,13 +457,17 @@ const server = createServer(async (req, res) => {
       }
       const skillParts = (Array.isArray(b.skills) ? b.skills : [])
         .filter(skill => skill && typeof skill.id === 'string' && typeof skill.name === 'string' && typeof skill.command === 'string')
-        .map(skill => ({ type: 'skill', id: skill.id, name: skill.name, command: skill.command }));
+        .map(skill => ({ type: 'skill', id: skill.id, name: skill.name, command: skill.command, ...(skill.description ? { description: skill.description } : {}) }));
+      const ruleParts = (Array.isArray(b.rules) ? b.rules : [])
+        .filter(rule => rule && typeof rule.id === 'string' && typeof rule.name === 'string')
+        .map(rule => ({ type: 'rule', id: rule.id, name: rule.name, ...(rule.description ? { description: rule.description } : {}) }));
       if (!b.retry) s.messages.push({ id: randomUUID(), role: 'user', parts: [...images.map(image => ({ type: 'image', ...image })), ...(b.text?.trim() ? [{ type: 'text', text: b.text }] : [])] });
       else {
         const user = s.messages.findLast(message => message.role === 'user');
-        if (user) user.parts = user.parts.filter(part => part.type !== 'skill');
+        if (user) user.parts = user.parts.filter(part => part.type !== 'skill' && part.type !== 'rule');
       }
-      s.activeSkills = skillParts; s.turnAnswerIds = [];
+      s.activeSkills = skillParts; s.activeRules = ruleParts; s.activeSearches = []; s.turnAnswerIds = [];
+      s.turnMessageId = null; s.turnTextByItem = {};
       s.turnId = null; s.status = 'submitted'; s.error = null; s.requests = []; save(s);
       const generation = s.generation = (s.generation || 0) + 1;
       void start(s, b, generation).catch(e => { if (s.generation === generation) fail(s, e); });
@@ -299,6 +496,72 @@ const server = createServer(async (req, res) => {
       if (validSkill(b.usedSkill)) {
         s.activeSkills ||= [];
         if (!s.activeSkills.some(skill => skillKey(skill) === skillKey(b.usedSkill))) s.activeSkills.push({ type: 'skill', ...b.usedSkill });
+      }
+      if (validRule(b.usedRule)) {
+        s.activeRules ||= [];
+        if (!s.activeRules.some(rule => ruleKey(rule) === ruleKey(b.usedRule))) s.activeRules.push({ type: 'rule', ...b.usedRule });
+      }
+      if (validSearch(b.usedSearch) || (b.usedSearch && typeof b.usedSearch.id === 'string' && Array.isArray(b.usedSearch.pages))) {
+        s.activeSearches ||= [];
+        const callId = String(r.params?.callId || r.id);
+        const incoming = {
+          type: 'search',
+          id: b.usedSearch.id,
+          callId,
+          query: typeof b.usedSearch.query === 'string' ? b.usedSearch.query : '',
+          sources: Array.isArray(b.usedSearch.sources) ? b.usedSearch.sources : [],
+          hits: Array.isArray(b.usedSearch.hits) ? b.usedSearch.hits : [],
+          pages: Array.isArray(b.usedSearch.pages) ? b.usedSearch.pages : [],
+          status: 'done',
+          phase: b.usedSearch.phase === 'visit'
+            ? 'visit'
+            : Array.isArray(b.usedSearch.pages) && b.usedSearch.pages.length ? 'fetch' : 'search',
+        };
+        const idx = s.activeSearches.findIndex(search => searchKey(search) === searchKey(incoming) || search.callId === callId);
+        if (idx < 0) {
+          if (validSearch(incoming) || incoming.pages.length) s.activeSearches.push(incoming);
+        } else {
+          const prev = s.activeSearches[idx];
+          const hitMap = new Map((prev.hits || []).map(hit => [hit.url || hit.id, hit]));
+          for (const hit of incoming.hits) hitMap.set(hit.url || hit.id, hit);
+          const pageMap = new Map((prev.pages || []).map(page => [page.url, page]));
+          for (const page of incoming.pages) pageMap.set(page.url, page);
+          s.activeSearches[idx] = {
+            ...prev,
+            ...incoming,
+            query: incoming.query || prev.query,
+            sources: [...new Set([...(prev.sources || []), ...(incoming.sources || [])])],
+            hits: [...hitMap.values()],
+            pages: [...pageMap.values()],
+          };
+        }
+        const turnMessage = ensureTurnAssistantMessage(s);
+        upsertInlineSearch(turnMessage, incoming);
+      } else if (r.method === 'item/tool/call' && INLINE_SEARCH_TOOLS.includes(String(r.params?.tool || ''))) {
+        // Always close the inline status bar even when the tool payload lacked usedSearch.
+        const callId = String(r.params?.callId || r.id);
+        const turnMessage = ensureTurnAssistantMessage(s);
+        const success = b.result && typeof b.result === 'object' ? b.result.success !== false : true;
+        const tool = String(r.params?.tool || '');
+        const args = r.params?.arguments && typeof r.params.arguments === 'object' ? r.params.arguments : {};
+        upsertInlineSearch(turnMessage, {
+          id: tool === 'fetchPages' && typeof args.searchId === 'string' && args.searchId
+            ? args.searchId
+            : callId,
+          callId,
+          query: typeof args.query === 'string' ? args.query : '',
+          sources: tool === 'fetchUrl'
+            ? urlHosts(args.urls)
+            : Array.isArray(args.sources) ? args.sources.filter(source => typeof source === 'string') : [],
+          hits: [],
+          pages: [],
+          status: success ? 'done' : 'error',
+          phase: tool === 'fetchUrl' ? 'visit' : tool === 'fetchPages' ? 'fetch' : 'search',
+          ...(success ? {} : { error: '执行失败' }),
+        });
+      }
+      if (b.usedRadar && typeof b.usedRadar.sessionId === 'string' && b.usedRadar.sessionId) {
+        upsertInlineRadar(ensureTurnAssistantMessage(s), b.usedRadar);
       }
       send({ id: r.id, result: b.result });
       s.requests = s.requests.filter(x => x !== r); save(s);

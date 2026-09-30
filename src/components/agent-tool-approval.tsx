@@ -37,9 +37,12 @@ const TOOL_LABELS: Record<string, string> = {
   updateRule: "更新规则",
   deleteRule: "删除规则",
   getRule: "加载规则",
+  webSearch: "网页搜索",
+  fetchPages: "抽取网页",
+  fetchUrl: "访问网页",
 };
 
-const READ_ONLY_TOOLS = new Set(["getSkill", "getRule"]);
+const READ_ONLY_TOOLS = new Set(["getSkill", "getRule", "webSearch", "fetchPages", "fetchUrl"]);
 
 function affectsFromToolName(toolName: string): ActionAffects | null {
   if (READ_ONLY_TOOLS.has(toolName)) return null;
@@ -257,12 +260,17 @@ export function AgentToolApprovalCard({
     );
   }
 
-  // Compact card for read-only tools (getSkill / getRule)
+  // Compact card for read-only tools (getSkill / getRule) — collapsed by default
+  // since the library tags above already surface what was mounted.
   if (readOnly) {
+    const kindLabel = toolName === "getRule" ? "规则" : "技能";
+    const summaryLabel = loadedName
+      ? `${label} · ${loadedName}`
+      : label;
     return (
-      <div
+      <details
         className={cn(
-          "mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs",
+          "mt-3 rounded-xl border px-3 py-2 text-xs",
           errored
             ? "border-destructive/40 bg-destructive/5 text-destructive"
             : applied
@@ -270,10 +278,21 @@ export function AgentToolApprovalCard({
               : "border-border bg-background/70 text-muted-foreground",
         )}
       >
-        <Wrench className="mt-0.5 size-3.5 shrink-0" />
-        <div className="min-w-0 flex-1">
-          <p>
+        <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
+          <Wrench className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate">
             调用了{" "}
+            <span className="font-medium text-foreground">{summaryLabel}</span>
+          </span>
+          {applied ? (
+            <span className="inline-flex shrink-0 items-center gap-1 text-emerald-700 dark:text-emerald-400">
+              <Check className="size-3.5" />
+              已加载
+            </span>
+          ) : null}
+        </summary>
+        <div className="mt-2 border-t border-border/60 pt-2">
+          <p>
             <span className="font-medium text-foreground">{label}</span>
             <span className="ml-1 font-mono text-[10px] opacity-70">
               {toolName}
@@ -281,20 +300,14 @@ export function AgentToolApprovalCard({
           </p>
           {loadedName ? (
             <p className="mt-0.5 text-foreground/80">
-              {toolName === "getRule" ? "规则" : "技能"}：{loadedName}
+              {kindLabel}：{loadedName}
             </p>
           ) : null}
           {errored ? (
             <p className="mt-0.5">{part.errorText || "执行失败"}</p>
           ) : null}
         </div>
-        {applied ? (
-          <span className="inline-flex shrink-0 items-center gap-1 text-emerald-700 dark:text-emerald-400">
-            <Check className="size-3.5" />
-            已加载
-          </span>
-        ) : null}
-      </div>
+      </details>
     );
   }
 

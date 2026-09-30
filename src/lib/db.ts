@@ -8,6 +8,9 @@ import type {
   AgentMemoryNote,
   AgentMessage,
   AgentMessageRole,
+  InvokedRadar,
+  InvokedRule,
+  InvokedSearch,
   InvokedSkill,
   MessageImage,
   Lane,
@@ -77,6 +80,9 @@ type AgentMessageRow = {
   role: string;
   content: string;
   skills_json: string;
+  rules_json: string;
+  searches_json: string;
+  radars_json: string;
   images_json: string;
   created_at: string;
 };
@@ -134,6 +140,9 @@ type StewardMessageRow = {
   role: string;
   content: string;
   skills_json: string;
+  rules_json: string;
+  searches_json: string;
+  radars_json: string;
   images_json: string;
   created_at: string;
 };
@@ -206,7 +215,10 @@ function mapAgentMessage(row: AgentMessageRow): AgentMessage {
     projectId: row.project_id,
     role: row.role as AgentMessageRole,
     content: row.content,
-    skills: parseInvokedSkills(row.skills_json),
+    skills: withSkillDescriptions(parseInvokedSkills(row.skills_json)),
+    rules: withRuleDescriptions(parseInvokedRules(row.rules_json)),
+    searches: parseInvokedSearches(row.searches_json),
+    radars: parseInvokedRadars(row.radars_json),
     images: parseMessageImages(row.images_json),
     createdAt: row.created_at,
   };
@@ -275,7 +287,10 @@ function mapStewardMessage(row: StewardMessageRow): StewardMessage {
     id: row.id,
     role: row.role as AgentMessageRole,
     content: row.content,
-    skills: parseInvokedSkills(row.skills_json),
+    skills: withSkillDescriptions(parseInvokedSkills(row.skills_json)),
+    rules: withRuleDescriptions(parseInvokedRules(row.rules_json)),
+    searches: parseInvokedSearches(row.searches_json),
+    radars: parseInvokedRadars(row.radars_json),
     images: parseMessageImages(row.images_json),
     createdAt: row.created_at,
   };
@@ -285,16 +300,165 @@ function parseInvokedSkills(value: string | undefined): InvokedSkill[] {
   try {
     const parsed = JSON.parse(value || "[]");
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (skill): skill is InvokedSkill =>
-        typeof skill?.id === "string" &&
-        typeof skill?.name === "string" &&
-        typeof skill?.command === "string",
-    );
+    return parsed
+      .filter(
+        (skill): skill is InvokedSkill =>
+          typeof skill?.id === "string" &&
+          typeof skill?.name === "string" &&
+          typeof skill?.command === "string",
+      )
+      .map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        command: skill.command,
+        ...(typeof skill.description === "string" && skill.description
+          ? { description: skill.description }
+          : {}),
+      }));
   } catch {
     return [];
   }
 }
+
+function parseInvokedRules(value: string | undefined): InvokedRule[] {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (rule): rule is InvokedRule =>
+          typeof rule?.id === "string" && typeof rule?.name === "string",
+      )
+      .map((rule) => ({
+        id: rule.id,
+        name: rule.name,
+        ...(typeof rule.description === "string" && rule.description
+          ? { description: rule.description }
+          : {}),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function parseInvokedSearches(value: string | undefined): InvokedSearch[] {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (search): search is InvokedSearch =>
+          typeof search?.id === "string" && typeof search?.query === "string",
+      )
+      .map((search) => ({
+        id: search.id,
+        query: search.query,
+        sources: Array.isArray(search.sources)
+          ? search.sources.filter((source): source is string => typeof source === "string")
+          : [],
+        hits: Array.isArray(search.hits)
+          ? search.hits
+              .filter(
+                (hit: { id?: unknown; title?: unknown; url?: unknown; source?: unknown }) =>
+                  typeof hit?.title === "string" && typeof hit?.url === "string",
+              )
+              .map(
+                (hit: {
+                  id?: string;
+                  title: string;
+                  url: string;
+                  source?: string;
+                  snippet?: string;
+                }, index: number) => ({
+                  id: typeof hit.id === "string" ? hit.id : String(index + 1),
+                  title: hit.title,
+                  url: hit.url,
+                  source: typeof hit.source === "string" ? hit.source : "web",
+                  ...(typeof hit.snippet === "string" && hit.snippet
+                    ? { snippet: hit.snippet }
+                    : {}),
+                }),
+              )
+          : [],
+        pages: Array.isArray(search.pages)
+          ? search.pages
+              .filter(
+                (page: { url?: unknown; title?: unknown }) =>
+                  typeof page?.url === "string" && typeof page?.title === "string",
+              )
+              .map(
+                (page: {
+                  url: string;
+                  title: string;
+                  source?: string;
+                  text?: string;
+                  error?: string;
+                }) => ({
+                  url: page.url,
+                  title: page.title,
+                  text: typeof page.text === "string" ? page.text : "",
+                  ...(typeof page.source === "string" ? { source: page.source } : {}),
+                  ...(typeof page.error === "string" && page.error
+                    ? { error: page.error }
+                    : {}),
+                }),
+              )
+          : [],
+        ...(typeof search.status === "string" ? { status: search.status as InvokedSearch["status"] } : {}),
+        ...(typeof search.phase === "string" ? { phase: search.phase as InvokedSearch["phase"] } : {}),
+        ...(typeof search.callId === "string" ? { callId: search.callId } : {}),
+        ...(typeof search.error === "string" && search.error
+          ? { error: search.error }
+          : {}),
+        ...(typeof search.at === "number" && Number.isFinite(search.at)
+          ? { at: Math.max(0, Math.floor(search.at)) }
+          : {}),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function parseInvokedRadars(value: string | undefined): InvokedRadar[] {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (radar): radar is InvokedRadar =>
+          typeof radar?.sessionId === "string" && radar.sessionId.length > 0,
+      )
+      .map((radar) => ({
+        sessionId: radar.sessionId,
+        title: typeof radar.title === "string" ? radar.title : "",
+        url: typeof radar.url === "string" ? radar.url : "",
+        reportUrl: typeof radar.reportUrl === "string" ? radar.reportUrl : "",
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function withSkillDescriptions(skills: InvokedSkill[]): InvokedSkill[] {
+  return skills.map((skill) => {
+    if (skill.description?.trim()) return skill;
+    const full = getSkill(skill.id);
+    return full?.description
+      ? { ...skill, description: full.description }
+      : skill;
+  });
+}
+
+function withRuleDescriptions(rules: InvokedRule[]): InvokedRule[] {
+  return rules.map((rule) => {
+    if (rule.description?.trim()) return rule;
+    const full = getRule(rule.id);
+    return full?.description
+      ? { ...rule, description: full.description }
+      : rule;
+  });
+}
+
 
 function parseMessageImages(value: string | undefined): MessageImage[] {
   try {
@@ -389,6 +553,7 @@ function ensureSchema(db: Database.Database) {
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       skills_json TEXT NOT NULL DEFAULT '[]',
+      rules_json TEXT NOT NULL DEFAULT '[]',
       images_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -458,6 +623,7 @@ function ensureSchema(db: Database.Database) {
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       skills_json TEXT NOT NULL DEFAULT '[]',
+      rules_json TEXT NOT NULL DEFAULT '[]',
       images_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL
     );
@@ -514,7 +680,16 @@ function ensureSchema(db: Database.Database) {
   if (!agentMessageColumns.some((column) => column.name === "skills_json")) {
     db.exec("ALTER TABLE agent_messages ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'");
   }
+  if (!agentMessageColumns.some((column) => column.name === "rules_json")) {
+    db.exec("ALTER TABLE agent_messages ADD COLUMN rules_json TEXT NOT NULL DEFAULT '[]'");
+  }
   if (!agentMessageColumns.some((column) => column.name === "images_json")) db.exec("ALTER TABLE agent_messages ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'");
+  if (!agentMessageColumns.some((column) => column.name === "searches_json")) {
+    db.exec("ALTER TABLE agent_messages ADD COLUMN searches_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!agentMessageColumns.some((column) => column.name === "radars_json")) {
+    db.exec("ALTER TABLE agent_messages ADD COLUMN radars_json TEXT NOT NULL DEFAULT '[]'");
+  }
   if (agentMessageColumns.some((column) => column.name === "activities_json")) {
     db.exec("DELETE FROM agent_messages WHERE content = '' AND activities_json <> '[]'");
     db.exec("UPDATE agent_messages SET activities_json = '[]' WHERE activities_json <> '[]'");
@@ -526,7 +701,16 @@ function ensureSchema(db: Database.Database) {
   if (!stewardMessageColumns.some((column) => column.name === "skills_json")) {
     db.exec("ALTER TABLE steward_messages ADD COLUMN skills_json TEXT NOT NULL DEFAULT '[]'");
   }
+  if (!stewardMessageColumns.some((column) => column.name === "rules_json")) {
+    db.exec("ALTER TABLE steward_messages ADD COLUMN rules_json TEXT NOT NULL DEFAULT '[]'");
+  }
   if (!stewardMessageColumns.some((column) => column.name === "images_json")) db.exec("ALTER TABLE steward_messages ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]'");
+  if (!stewardMessageColumns.some((column) => column.name === "searches_json")) {
+    db.exec("ALTER TABLE steward_messages ADD COLUMN searches_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  if (!stewardMessageColumns.some((column) => column.name === "radars_json")) {
+    db.exec("ALTER TABLE steward_messages ADD COLUMN radars_json TEXT NOT NULL DEFAULT '[]'");
+  }
   if (stewardMessageColumns.some((column) => column.name === "activities_json")) {
     db.exec("DELETE FROM steward_messages WHERE content = '' AND activities_json <> '[]'");
     db.exec("UPDATE steward_messages SET activities_json = '[]' WHERE activities_json <> '[]'");
@@ -2155,18 +2339,66 @@ export function listRecentStewardMessagesForPrompt(): StewardMessage[] {
 }
 
 /** Mirror the Codex conversation for existing history pages and cross-agent context. */
-export function syncCodexMessages(scope: string, messages: Array<{id:string;role:string;parts:Array<{type:string;text?:string;id?:unknown;name?:unknown;command?:unknown;url?:unknown;path?:unknown;mimeType?:unknown}>}>) {
-  const rows = messages.filter(m => m.role === "user" || m.role === "assistant").map(m => ({
+export function syncCodexMessages(scope: string, messages: Array<{id:string;role:string;parts:Array<{type:string;text?:string;id?:unknown;name?:unknown;command?:unknown;query?:unknown;sources?:unknown;hits?:unknown;pages?:unknown;url?:unknown;path?:unknown;mimeType?:unknown;description?:unknown;status?:unknown;phase?:unknown;callId?:unknown;error?:unknown;sessionId?:unknown;title?:unknown;reportUrl?:unknown}>}>) {
+  const rows = messages.filter(m => m.role === "user" || m.role === "assistant").map(m => {
+    let textLen = 0;
+    const orderedSearches: InvokedSearch[] = [];
+    for (const p of m.parts) {
+      if (p.type === "text") {
+        textLen += typeof p.text === "string" ? p.text.length : 0;
+        continue;
+      }
+      if (p.type !== "search" || typeof p.id !== "string") continue;
+      orderedSearches.push({
+        id: p.id,
+        query: typeof p.query === "string" ? p.query : "",
+        sources: Array.isArray(p.sources)
+          ? p.sources.filter((source): source is string => typeof source === "string")
+          : [],
+        hits: Array.isArray(p.hits) ? (p.hits as InvokedSearch["hits"]) : [],
+        pages: Array.isArray(p.pages) ? (p.pages as InvokedSearch["pages"]) : [],
+        at: textLen,
+        ...(typeof p.status === "string" ? { status: p.status as InvokedSearch["status"] } : {}),
+        ...(typeof p.phase === "string" ? { phase: p.phase as InvokedSearch["phase"] } : {}),
+        ...(typeof p.callId === "string" ? { callId: p.callId } : {}),
+        ...(typeof p.error === "string" && p.error ? { error: p.error } : {}),
+      });
+    }
+    return {
     id: m.id,
     role: m.role,
     content: m.parts.filter(p=>p.type === "text").map(p=>p.text || "").join(""),
     skills: m.parts.filter((p): p is typeof p & InvokedSkill =>
       p.type === "skill" && typeof p.id === "string" && typeof p.name === "string" && typeof p.command === "string"
-    ).map(p => ({ id: p.id, name: p.name, command: p.command })),
+    ).map(p => ({
+      id: p.id,
+      name: p.name,
+      command: p.command,
+      ...(typeof p.description === "string" && p.description
+        ? { description: p.description }
+        : {}),
+    })),
+    rules: m.parts.filter((p): p is typeof p & InvokedRule =>
+      p.type === "rule" && typeof p.id === "string" && typeof p.name === "string"
+    ).map(p => ({
+      id: p.id,
+      name: p.name,
+      ...(typeof p.description === "string" && p.description
+        ? { description: p.description }
+        : {}),
+    })),
+    searches: parseInvokedSearches(JSON.stringify(orderedSearches)),
+    radars: m.parts.filter((p): p is typeof p & InvokedRadar => p.type === "radar" && typeof p.sessionId === "string" && p.sessionId.length > 0).map(p => ({
+      sessionId: p.sessionId,
+      title: typeof p.title === "string" ? p.title : "",
+      url: typeof p.url === "string" ? p.url : "",
+      reportUrl: typeof p.reportUrl === "string" ? p.reportUrl : "",
+    })),
     images: m.parts.filter((p): p is typeof p & MessageImage => p.type === "image" && typeof p.id === "string" && typeof p.url === "string" && typeof p.path === "string" && typeof p.name === "string" && typeof p.mimeType === "string").map(p => ({ id: p.id, name: p.name, url: p.url, path: p.path, mimeType: p.mimeType })),
-  }));
+  };
+  });
   const old = scope === "steward" ? listStewardMessages() : listAgentMessages(scope);
-  if (old.length === rows.length && rows.every((m,i)=>m.id===old[i].id && m.content===old[i].content && JSON.stringify(m.skills)===JSON.stringify(old[i].skills) && JSON.stringify(m.images)===JSON.stringify(old[i].images))) return;
+  if (old.length === rows.length && rows.every((m,i)=>m.id===old[i].id && m.content===old[i].content && JSON.stringify(m.skills)===JSON.stringify(old[i].skills) && JSON.stringify(m.rules)===JSON.stringify(old[i].rules) && JSON.stringify(m.searches)===JSON.stringify(old[i].searches) && JSON.stringify(m.radars)===JSON.stringify(old[i].radars) && JSON.stringify(m.images)===JSON.stringify(old[i].images))) return;
   const table = scope === "steward" ? "steward_messages" : "agent_messages";
   const db = getDb();
   db.transaction(()=>{
@@ -2178,9 +2410,12 @@ export function syncCodexMessages(scope: string, messages: Array<{id:string;role
     for(const m of rows) {
       const created = known.get(m.id) || new Date(time=Math.max(Date.now(),time+1)).toISOString();
       const skillsJson = JSON.stringify(m.skills);
+      const rulesJson = JSON.stringify(m.rules);
+      const searchesJson = JSON.stringify(m.searches);
+      const radarsJson = JSON.stringify(m.radars);
       const imagesJson = JSON.stringify(m.images);
-      if(scope === "steward") db.prepare("INSERT INTO steward_messages (id,role,content,skills_json,images_json,created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content, skills_json=excluded.skills_json, images_json=excluded.images_json").run(m.id,m.role,m.content,skillsJson,imagesJson,created);
-      else db.prepare("INSERT INTO agent_messages (id,project_id,role,content,skills_json,images_json,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content, skills_json=excluded.skills_json, images_json=excluded.images_json").run(m.id,scope,m.role,m.content,skillsJson,imagesJson,created);
+      if(scope === "steward") db.prepare("INSERT INTO steward_messages (id,role,content,skills_json,rules_json,searches_json,radars_json,images_json,created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content, skills_json=excluded.skills_json, rules_json=excluded.rules_json, searches_json=excluded.searches_json, radars_json=excluded.radars_json, images_json=excluded.images_json").run(m.id,m.role,m.content,skillsJson,rulesJson,searchesJson,radarsJson,imagesJson,created);
+      else db.prepare("INSERT INTO agent_messages (id,project_id,role,content,skills_json,rules_json,searches_json,radars_json,images_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET content=excluded.content, skills_json=excluded.skills_json, rules_json=excluded.rules_json, searches_json=excluded.searches_json, radars_json=excluded.radars_json, images_json=excluded.images_json").run(m.id,scope,m.role,m.content,skillsJson,rulesJson,searchesJson,radarsJson,imagesJson,created);
     }
   })();
 }
