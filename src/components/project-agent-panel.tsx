@@ -1,6 +1,10 @@
 "use client";
 
 import { useCodexChat } from "@/hooks/use-codex-chat";
+import {
+  ChatHistorySearch,
+  scrollChatMessageIntoView,
+} from "@/components/chat-history-search";
 import { CodexControls, CodexSettings } from "@/components/codex-controls";
 import {
   isSkillMessagePart,
@@ -254,6 +258,7 @@ export function ProjectAgentPanel({
     scrollRef,
     onScroll: onStickScroll,
     pinToBottom,
+    releaseStick,
   } = useStickToBottomScroll({
     enabled: open && tab === "chat",
     streaming: status === "streaming" || status === "submitted",
@@ -285,6 +290,36 @@ export function ProjectAgentPanel({
     scrollRef,
     onScrollBase: onStickScroll,
   });
+
+  const jumpToMessage = useCallback(
+    async (messageId: string) => {
+      setTab("chat");
+      releaseStick();
+      if (!document.getElementById(`msg-${messageId}`)) {
+        const res = await fetch(
+          `/api/projects/${projectId}/agent/messages/through?id=${encodeURIComponent(messageId)}`,
+        );
+        const data = (await res.json()) as {
+          messages?: AgentMessage[];
+          hasMore?: boolean;
+          error?: string;
+        };
+        if (!res.ok || !data.messages) {
+          throw new Error(data.error || "无法加载该消息");
+        }
+        setMessages(toUIMessages(data.messages));
+        setHasMoreHistory(Boolean(data.hasMore));
+        for (let i = 0; i < 40; i += 1) {
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => resolve());
+          });
+          if (document.getElementById(`msg-${messageId}`)) break;
+        }
+      }
+      await scrollChatMessageIntoView(messageId);
+    },
+    [projectId, releaseStick, setMessages],
+  );
 
   useEffect(() => {
     if (!open || tab !== "chat") return;
@@ -441,6 +476,10 @@ export function ProjectAgentPanel({
               长期笔记
             </Button>
             <div className="ml-auto flex items-center gap-1">
+              <ChatHistorySearch
+                searchUrl={`/api/projects/${projectId}/agent/messages/search`}
+                onJumpToMessage={jumpToMessage}
+              />
               <CodexSettings
                 state={codexState}
                 action={codexAction}
@@ -518,8 +557,9 @@ export function ProjectAgentPanel({
                   return (
                     <div
                       key={message.id}
+                      id={`msg-${message.id}`}
                       className={cn(
-                        "flex",
+                        "flex scroll-mt-4 rounded-2xl",
                         isUser ? "justify-end" : "justify-start",
                       )}
                     >

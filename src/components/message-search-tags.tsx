@@ -305,8 +305,8 @@ export function MessageSearchBar({ search }: { search: InvokedSearch }) {
           <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
         )}
         <Globe className="size-3.5 shrink-0 opacity-70" />
-        <span className="min-w-0 flex-1">
-          <span className="font-medium text-foreground">{title}</span>
+        <span className="min-w-0 flex-1 overflow-hidden">
+          <span className="block truncate font-medium text-foreground">{title}</span>
           {detail ? (
             <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
               {detail}

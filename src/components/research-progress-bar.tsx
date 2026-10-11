@@ -115,7 +115,7 @@ function ResearchProgressBar({
   return (
     <div
       className={cn(
-        "flex w-2/3 max-w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-xs",
+        "flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-xs sm:w-2/3",
         failed
           ? "border-destructive/35 bg-destructive/5 text-destructive"
           : "border-border/50 bg-background/45 text-foreground",

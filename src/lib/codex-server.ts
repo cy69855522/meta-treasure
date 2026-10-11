@@ -30,7 +30,7 @@ const stateDir = path.join(
   process.env.XDG_STATE_HOME || path.join(homedir(), ".local/state"),
   "progress-codex",
 );
-const serviceVersion = 29;
+const serviceVersion = 31;
 let launching: Promise<void> | undefined;
 async function credentials() {
   await fs.mkdir(stateDir, { recursive: true, mode: 0o700 });
@@ -142,7 +142,7 @@ async function rawState(scope: string) {
 export async function getCodexState(scope: string) {
   let state = await rawState(scope);
   for (const req of state.requests) {
-    if (req.method === "item/tool/call" && ["getSkill", "getRule", "webSearch", "fetchPages", "fetchUrl", "deepRadarStart", "deepRadarList", "deepRadarStatus", "deepRadarProgress", "deepRadarReport", "deepRadarAct"].includes(String(req.params.tool))) {
+    if (req.method === "item/tool/call" && ["getSkill", "getRule", "webSearch", "fetchPages", "fetchUrl", "deepRadarStart", "deepRadarList", "deepRadarFavoriteList", "deepRadarStatus", "deepRadarProgress", "deepRadarReport", "deepRadarAct"].includes(String(req.params.tool))) {
       try { state = await respond(scope, String(req.id), true); } catch { /* Another request may have claimed it. */ }
     }
   }

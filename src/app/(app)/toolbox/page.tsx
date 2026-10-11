@@ -7,18 +7,21 @@ const TOOLS: Array<{
   url: string;
   host: string;
   icon: LucideIcon;
+  integrated?: boolean;
 }> = [
   {
     name: "Deep Radar",
-    url: "http://localhost:3433/",
-    host: "localhost:3433",
+    url: "/deep-radar/research",
+    host: "Progress",
     icon: Radar,
+    integrated: true,
   },
   {
     name: "Hot Radar",
-    url: "http://localhost:1315/",
-    host: "localhost:1315",
+    url: "/hot-radar/reddit/hot",
+    host: "Progress",
     icon: Flame,
+    integrated: true,
   },
 ];
 
@@ -43,7 +46,7 @@ export default function ToolboxPage() {
               key={tool.name}
               href={tool.url}
               target="_blank"
-              rel="noreferrer"
+              rel={tool.integrated ? undefined : "noreferrer"}
               className="group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/40"
             >
               <div className="flex items-start justify-between gap-2">
@@ -51,12 +54,14 @@ export default function ToolboxPage() {
                   <Icon className="size-4 text-foreground" />
                 </div>
                 <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                  外链
+                  {tool.integrated ? "内置" : "外链"}
                 </span>
               </div>
               <h2 className="mt-3 text-base font-semibold">{tool.name}</h2>
               <p className="mt-1 flex-1 text-sm text-muted-foreground">
-                打开 {tool.name} 网页（{tool.host}）。
+                {tool.integrated
+                  ? `在新标签页打开内置 ${tool.name} 工作区。`
+                  : `打开 ${tool.name} 网页（${tool.host}）。`}
               </p>
               <p className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-foreground">
                 打开

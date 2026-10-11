@@ -8,7 +8,7 @@ import type { CodexCatalogModel, CodexModelOption } from "@/lib/codex-types";
 type TomlSection = { path: string[]; values: Record<string, string> };
 type ConfigSource = { name?: string; sections: TomlSection[] };
 
-function codexHome() {
+export function codexHome() {
   return process.env.PROGRESS_CODEX_HOME || path.join(homedir(), ".progress", "codex");
 }
 

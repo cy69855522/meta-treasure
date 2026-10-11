@@ -11,6 +11,10 @@ import {
   listTasks,
 } from "@/lib/db";
 import {
+  buildFavoriteReportsCatalogBlock,
+  FAVORITE_REPORT_LOAD_PROMPT_LINES,
+} from "@/features/deep-radar/lib/service";
+import {
   buildSkillsCatalogBlock,
   buildRulesCatalogBlock,
   SKILL_LOAD_PROMPT_LINES,
@@ -78,6 +82,9 @@ export function buildProjectAgentTurnSnapshot(projectId: string): string {
     "",
     "=== 规则库目录（folder/rule id + name / description，无正文） ===",
     buildRulesCatalogBlock(),
+    "",
+    "=== 收藏的研究报告目录（session id + title / 摘要，无正文） ===",
+    buildFavoriteReportsCatalogBlock(),
   ].join("\n");
 }
 
@@ -142,9 +149,10 @@ export function buildProjectAgentSystemPrompt(projectId: string): string {
     "规则库：getRule（只读，含正文）/ createRuleFolder / updateRuleFolder / deleteRuleFolder / createRule / updateRule / deleteRule。",
     "网页搜索（两阶段）：先 webSearch（sources=wechat|baidu|google，可多选）拿到候选链接；再 fetchPages 批量抽取需要的页面正文。不要假装访问未抽取的 URL。",
     "访问网页：用户消息里给出具体网址、或让你看/查某个链接时，直接调用 fetchUrl 读取该网址正文，不要改用 webSearch 搜 site:。读取失败就如实说明失败原因（如被站点拦截、超时），不要凭记忆编造页面内容。",
-    "Deep Radar：需要完整深度研究时用 deepRadarStart 传入需求（会新建会话并自动开跑）。气泡底部会显示进度条。需要数字进度时用 deepRadarProgress（与进度条同一接口）；deepRadarStatus 看摘要，deepRadarReport 读报告，deepRadarList 列已有会话，deepRadarAct 追加消息或停止。返回的 url / reportUrl 必须原样贴进回复（这是打开 Deep Radar 并定位到该报告的链接，允许包含其中的路径）。研究未完成时不要编造报告内容。进度已完成或失败后不要反复查询。",
+    "Deep Radar：需要完整深度研究时用 deepRadarStart 传入需求（会新建会话并自动开跑）。气泡底部会显示进度条。需要数字进度时用 deepRadarProgress（与进度条同一接口）；deepRadarStatus 看摘要，deepRadarReport 按 id 读报告，deepRadarFavoriteList 列收藏报告，deepRadarList 列已有会话，deepRadarAct 追加消息或停止。返回的 url / reportUrl 必须原样贴进回复（这是打开 Deep Radar 并定位到该报告的链接，允许包含其中的路径）。研究未完成时不要编造报告内容。进度已完成或失败后不要反复查询。",
     ...SKILL_LOAD_PROMPT_LINES,
     ...RULE_LOAD_PROMPT_LINES,
+    ...FAVORITE_REPORT_LOAD_PROMPT_LINES,
     "创建或修改 Skill/Rule 时：严格遵循用户指令；用户给出的原文或「复制」请求应尽量原样保留 body，不要套固定 SKILL.md/RULE 模板，也不要擅自大幅改写。",
     "仅当用户明确要求你起草、改写、润色或补充时，才重写正文。删除目录会级联删除其中全部条目。",
     `Now 列 WIP 上限为 ${NOW_WIP_LIMIT}。`,
@@ -166,6 +174,9 @@ export function buildProjectAgentSystemPrompt(projectId: string): string {
     "",
     "=== 规则库目录（folder/rule id + name / description，无正文） ===",
     buildRulesCatalogBlock(),
+    "",
+    "=== 收藏的研究报告目录（session id + title / 摘要，无正文） ===",
+    buildFavoriteReportsCatalogBlock(),
     custom ? `\n=== 额外指令 ===\n${custom}` : "",
   ]
     .filter(Boolean)

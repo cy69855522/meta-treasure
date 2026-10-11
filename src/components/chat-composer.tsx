@@ -9,13 +9,21 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
 } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { ImageLightbox } from "@/components/image-lightbox";
 import { activeSkillCommand } from "@/lib/skill-commands";
 import { cn } from "@/lib/utils";
 import type { MessageImage } from "@/lib/types";
 import { CHAT_COLUMN_CLASS } from "@/lib/constants";
+
+function dataTransferHasFiles(dt: DataTransfer | null | undefined): boolean {
+  if (!dt) return false;
+  if (dt.types.includes("Files")) return true;
+  return Array.from(dt.items || []).some((item) => item.kind === "file");
+}
 
 type SkillOption = {
   id: string;
@@ -68,8 +76,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
     const [images, setImages] = useState<MessageImage[]>([]);
     const [uploading, setUploading] = useState(false);
     const [imageError, setImageError] = useState("");
+    const [dragOver, setDragOver] = useState(false);
+    const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+    const dragDepthRef = useRef(0);
 
     useImperativeHandle(ref, () => ({
       appendDraft(text: string) {
@@ -179,29 +190,83 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
       }
     }
 
+    function onDragEnter(event: DragEvent<HTMLFormElement>) {
+      if (!dataTransferHasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dragDepthRef.current += 1;
+      setDragOver(true);
+    }
+
+    function onDragOver(event: DragEvent<HTMLFormElement>) {
+      if (!dataTransferHasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "copy";
+    }
+
+    function onDragLeave(event: DragEvent<HTMLFormElement>) {
+      if (!dataTransferHasFiles(event.dataTransfer)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      if (dragDepthRef.current === 0) setDragOver(false);
+    }
+
+    function onDrop(event: DragEvent<HTMLFormElement>) {
+      event.preventDefault();
+      event.stopPropagation();
+      dragDepthRef.current = 0;
+      setDragOver(false);
+      const files = Array.from(event.dataTransfer.files || []);
+      if (files.length) void upload(files);
+    }
+
     return (
       <form
         onSubmit={submit}
-        className="border-t border-border px-4 py-4 md:px-6"
+        onDragEnter={onDragEnter}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        className={cn(
+          "relative border-t border-border px-4 py-4 md:px-6",
+          dragOver && "bg-accent/40",
+        )}
       >
+        {dragOver ? (
+          <div
+            className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-t-xl border-2 border-dashed border-primary/60 bg-background/80 text-sm font-medium text-primary backdrop-blur-sm"
+            aria-hidden
+          >
+            松开以上传图片
+          </div>
+        ) : null}
         {images.length ? (
           <div className={cn("mb-2 flex w-full flex-wrap gap-2", CHAT_COLUMN_CLASS)}>
-            {images.map((image) => (
+            {images.map((image, index) => (
               <div
                 key={image.id}
                 className="group relative size-16 overflow-hidden rounded-lg border bg-muted"
               >
-                <Image
-                  src={image.url}
-                  alt={image.name}
-                  fill
-                  sizes="64px"
-                  unoptimized
-                  className="object-cover"
-                />
                 <button
                   type="button"
-                  className="absolute right-1 top-1 rounded-full bg-black/65 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                  className="absolute inset-0 cursor-zoom-in"
+                  onClick={() => setLightboxIndex(index)}
+                  aria-label={`放大查看 ${image.name}`}
+                >
+                  <Image
+                    src={image.url}
+                    alt={image.name}
+                    fill
+                    sizes="64px"
+                    unoptimized
+                    className="object-cover"
+                  />
+                </button>
+                <button
+                  type="button"
+                  className="absolute right-1 top-1 z-10 rounded-full bg-black/65 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
                   onClick={() =>
                     setImages((current) =>
                       current.filter((item) => item.id !== image.id),
@@ -214,6 +279,14 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
               </div>
             ))}
           </div>
+        ) : null}
+        {lightboxIndex !== null && images[lightboxIndex] ? (
+          <ImageLightbox
+            images={images.map((img) => ({ url: img.url, name: img.name }))}
+            currentIndex={lightboxIndex}
+            onClose={() => setLightboxIndex(null)}
+            onNavigate={(index) => setLightboxIndex(index)}
+          />
         ) : null}
         {imageError ? (
           <p className={cn("mb-2 w-full text-xs text-destructive", CHAT_COLUMN_CLASS)}>
@@ -353,7 +426,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
                   return;
                 }
               }
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 submit();
               }

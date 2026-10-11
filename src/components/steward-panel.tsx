@@ -1,6 +1,10 @@
 "use client";
 
 import { useCodexChat } from "@/hooks/use-codex-chat";
+import {
+  ChatHistorySearch,
+  scrollChatMessageIntoView,
+} from "@/components/chat-history-search";
 import { CodexControls, CodexSettings } from "@/components/codex-controls";
 import {
   isSkillMessagePart,
@@ -234,6 +238,7 @@ export function StewardPanel({
     scrollRef,
     onScroll: onStickScroll,
     pinToBottom,
+    releaseStick,
   } = useStickToBottomScroll({
     enabled: tab === "chat",
     streaming: status === "streaming" || status === "submitted",
@@ -265,6 +270,36 @@ export function StewardPanel({
     scrollRef,
     onScrollBase: onStickScroll,
   });
+
+  const jumpToMessage = useCallback(
+    async (messageId: string) => {
+      setTab("chat");
+      releaseStick();
+      if (!document.getElementById(`msg-${messageId}`)) {
+        const res = await fetch(
+          `/api/steward/messages/through?id=${encodeURIComponent(messageId)}`,
+        );
+        const data = (await res.json()) as {
+          messages?: StewardMessage[];
+          hasMore?: boolean;
+          error?: string;
+        };
+        if (!res.ok || !data.messages) {
+          throw new Error(data.error || "无法加载该消息");
+        }
+        setMessages(toUIMessages(data.messages));
+        setHasMoreHistory(Boolean(data.hasMore));
+        for (let i = 0; i < 40; i += 1) {
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => resolve());
+          });
+          if (document.getElementById(`msg-${messageId}`)) break;
+        }
+      }
+      await scrollChatMessageIntoView(messageId);
+    },
+    [releaseStick, setMessages],
+  );
 
   useEffect(() => {
     if (tab !== "chat") return;
@@ -365,6 +400,10 @@ export function StewardPanel({
           长期笔记
         </Button>
         <div className="ml-auto flex items-center gap-1">
+          <ChatHistorySearch
+            searchUrl="/api/steward/messages/search"
+            onJumpToMessage={jumpToMessage}
+          />
           <CodexSettings
             state={codexState}
             action={codexAction}
@@ -431,8 +470,9 @@ export function StewardPanel({
               return (
                 <div
                   key={message.id}
+                  id={`msg-${message.id}`}
                   className={cn(
-                    "flex",
+                    "flex scroll-mt-4 rounded-2xl",
                     isUser ? "justify-end" : "justify-start",
                   )}
                 >

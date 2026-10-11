@@ -59,7 +59,7 @@ export function CodexSettings({ state, action, modelOptions, onModelChange }: Se
 
   return (
     <>
-      <button type="button" className={cn(buttonClass, "ml-auto bg-background")} disabled={busy} onClick={show}>
+      <button type="button" className={cn(buttonClass, "bg-background")} disabled={busy} onClick={show}>
         <Settings2 className="size-3.5" />配置
       </button>
       {open ? (

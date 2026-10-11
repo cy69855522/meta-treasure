@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 const NEAR_BOTTOM_PX = 96;
 
@@ -23,6 +23,7 @@ export function useStickToBottomScroll(options: {
   const stickRef = useRef(true);
   const programmaticRef = useRef(false);
   const wasEnabledRef = useRef(false);
+  const lastHeightRef = useRef<number | null>(null);
 
   const scrollToBottomNow = useCallback(() => {
     const el = scrollRef.current;
@@ -48,6 +49,11 @@ export function useStickToBottomScroll(options: {
     stickRef.current = true;
   }, []);
 
+  /** Release bottom stick so programmatic scroll-to-message is not overridden. */
+  const releaseStick = useCallback(() => {
+    stickRef.current = false;
+  }, []);
+
   // Entering chat: always jump to bottom (instant), then settle after layout.
   useEffect(() => {
     if (!enabled) {
@@ -68,6 +74,37 @@ export function useStickToBottomScroll(options: {
     };
   }, [enabled, scrollToBottomNow]);
 
+  // When the viewport itself shrinks or grows (status bar above the composer,
+  // composer resize), keep the bottom edge anchored so content is pushed up
+  // instead of being covered.
+  const anchorViewport = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const height = el.clientHeight;
+    const prev = lastHeightRef.current;
+    lastHeightRef.current = height;
+    if (prev === null || prev === height) return;
+    if (stickRef.current) {
+      scrollToBottomNow();
+      return;
+    }
+    programmaticRef.current = true;
+    el.scrollTop += prev - height;
+    requestAnimationFrame(() => {
+      programmaticRef.current = false;
+    });
+  }, [scrollToBottomNow]);
+
+  // Sibling UI toggled by React (status bar) resizes the viewport within the
+  // same commit; correct before paint instead of waiting for ResizeObserver.
+  useLayoutEffect(() => {
+    if (!enabled) {
+      lastHeightRef.current = null;
+      return;
+    }
+    anchorViewport();
+  });
+
   // Keep pinned while content/layout grows (markdown, images, prepend fills).
   useEffect(() => {
     if (!enabled) return;
@@ -75,8 +112,8 @@ export function useStickToBottomScroll(options: {
     if (!el) return;
 
     const sync = () => {
-      if (!stickRef.current) return;
-      scrollToBottomNow();
+      anchorViewport();
+      if (stickRef.current) scrollToBottomNow();
     };
 
     const ro = new ResizeObserver(sync);
@@ -86,7 +123,7 @@ export function useStickToBottomScroll(options: {
 
     sync();
     return () => ro.disconnect();
-  }, [enabled, contentKey, scrollToBottomNow]);
+  }, [enabled, contentKey, anchorViewport, scrollToBottomNow]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -94,5 +131,5 @@ export function useStickToBottomScroll(options: {
     scrollToBottomNow();
   }, [enabled, streaming, contentKey, scrollToBottomNow]);
 
-  return { scrollRef, onScroll, pinToBottom };
+  return { scrollRef, onScroll, pinToBottom, releaseStick };
 }

@@ -8,6 +8,7 @@ import type {
   AgentMemoryNote,
   AgentMessage,
   AgentMessageRole,
+  ChatMessageSearchHit,
   InvokedRadar,
   InvokedRule,
   InvokedSearch,
@@ -1470,6 +1471,112 @@ export function listAgentMessagesPage(
   return { messages: slice.map(mapAgentMessage), hasMore };
 }
 
+export type { ChatMessageSearchHit };
+
+function chatSearchSnippet(content: string, query: string, radius = 56): string {
+  const text = content.replace(/\s+/g, " ").trim();
+  if (!text) return "（空消息）";
+  const lower = text.toLowerCase();
+  const needle = query.toLowerCase();
+  const at = lower.indexOf(needle);
+  if (at < 0) {
+    return text.length <= radius * 2 ? text : `${text.slice(0, radius * 2)}…`;
+  }
+  const start = Math.max(0, at - radius);
+  const end = Math.min(text.length, at + needle.length + radius);
+  return `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/([\\%_])/g, "\\$1");
+}
+
+/** Keyword search over Agent chat history (newest matches first). */
+export function searchAgentMessages(
+  projectId: string,
+  query: string,
+  options?: { limit?: number },
+): ChatMessageSearchHit[] {
+  const q = query.trim();
+  if (!q) return [];
+  const limit = Math.min(100, Math.max(1, options?.limit ?? 40));
+  const pattern = `%${escapeLike(q)}%`;
+  const rows = getDb()
+    .prepare(
+      `SELECT id, role, content, created_at FROM agent_messages
+       WHERE project_id = ?
+         AND content LIKE ? ESCAPE '\\'
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(projectId, pattern, limit) as Array<{
+    id: string;
+    role: string;
+    content: string;
+    created_at: string;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    role: row.role as AgentMessageRole,
+    snippet: chatSearchSnippet(row.content, q),
+    createdAt: row.created_at,
+  }));
+}
+
+/**
+ * Messages from `throughId` (inclusive) through newest, oldest→newest.
+ * Used to jump from search into a historical bubble.
+ */
+export function listAgentMessagesThrough(
+  projectId: string,
+  throughId: string,
+): { messages: AgentMessage[]; hasMore: boolean } | null {
+  const target = getDb()
+    .prepare(
+      `SELECT id, created_at FROM agent_messages WHERE id = ? AND project_id = ?`,
+    )
+    .get(throughId, projectId) as
+    | { id: string; created_at: string }
+    | undefined;
+  if (!target) return null;
+
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM agent_messages
+       WHERE project_id = ?
+         AND (
+           created_at > ?
+           OR (created_at = ? AND id >= ?)
+         )
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all(
+      projectId,
+      target.created_at,
+      target.created_at,
+      target.id,
+    ) as AgentMessageRow[];
+
+  const older = getDb()
+    .prepare(
+      `SELECT 1 AS ok FROM agent_messages
+       WHERE project_id = ?
+         AND (
+           created_at < ?
+           OR (created_at = ? AND id < ?)
+         )
+       LIMIT 1`,
+    )
+    .get(projectId, target.created_at, target.created_at, target.id) as
+    | { ok: number }
+    | undefined;
+
+  return {
+    messages: rows.map(mapAgentMessage),
+    hasMore: Boolean(older),
+  };
+}
+
 export function createAgentMessage(input: {
   projectId: string;
   role: AgentMessageRole;
@@ -2250,6 +2357,78 @@ export function listStewardMessagesPage(options?: {
   const hasMore = rows.length > limit;
   const slice = hasMore ? rows.slice(rows.length - limit) : rows;
   return { messages: slice.map(mapStewardMessage), hasMore };
+}
+
+/** Keyword search over Steward chat history (newest matches first). */
+export function searchStewardMessages(
+  query: string,
+  options?: { limit?: number },
+): ChatMessageSearchHit[] {
+  const q = query.trim();
+  if (!q) return [];
+  const limit = Math.min(100, Math.max(1, options?.limit ?? 40));
+  const pattern = `%${escapeLike(q)}%`;
+  const rows = getDb()
+    .prepare(
+      `SELECT id, role, content, created_at FROM steward_messages
+       WHERE content LIKE ? ESCAPE '\\'
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(pattern, limit) as Array<{
+    id: string;
+    role: string;
+    content: string;
+    created_at: string;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    role: row.role as AgentMessageRole,
+    snippet: chatSearchSnippet(row.content, q),
+    createdAt: row.created_at,
+  }));
+}
+
+/**
+ * Messages from `throughId` (inclusive) through newest, oldest→newest.
+ * Used to jump from search into a historical bubble.
+ */
+export function listStewardMessagesThrough(
+  throughId: string,
+): { messages: StewardMessage[]; hasMore: boolean } | null {
+  const target = getDb()
+    .prepare(`SELECT id, created_at FROM steward_messages WHERE id = ?`)
+    .get(throughId) as { id: string; created_at: string } | undefined;
+  if (!target) return null;
+
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM steward_messages
+       WHERE (
+         created_at > ?
+         OR (created_at = ? AND id >= ?)
+       )
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all(target.created_at, target.created_at, target.id) as StewardMessageRow[];
+
+  const older = getDb()
+    .prepare(
+      `SELECT 1 AS ok FROM steward_messages
+       WHERE (
+         created_at < ?
+         OR (created_at = ? AND id < ?)
+       )
+       LIMIT 1`,
+    )
+    .get(target.created_at, target.created_at, target.id) as
+    | { ok: number }
+    | undefined;
+
+  return {
+    messages: rows.map(mapStewardMessage),
+    hasMore: Boolean(older),
+  };
 }
 
 export function createStewardMessage(input: {

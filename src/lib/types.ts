@@ -155,6 +155,14 @@ export type AgentMessage = {
   createdAt: string;
 };
 
+/** Compact hit returned by Agent / Steward chat history search. */
+export type ChatMessageSearchHit = {
+  id: string;
+  role: AgentMessageRole;
+  snippet: string;
+  createdAt: string;
+};
+
 /** Folder in the Skills Library. */
 export type SkillFolder = {
   id: string;

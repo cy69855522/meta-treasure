@@ -3,6 +3,11 @@
 import { memo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import {
+  normalizeChatContent,
+  normalizeStreamingChatContent,
+  remarkSafeBreaks,
+} from "@/lib/chat-markdown-normalize";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -13,40 +18,7 @@ type Props = {
   streaming?: boolean;
 };
 
-/** Markdown collapses lone newlines; turn them into hard breaks for chat. */
-function withHardLineBreaks(content: string): string {
-  return content.replace(/([^\n])\n(?!\n)/g, "$1  \n");
-}
-
-/**
- * Models often paste WeChat/HTML fragments. react-markdown does not render raw
- * HTML by default, so `<br>` shows literally and `<s>3000</s>` can collapse or
- * look like glued digits. Convert a small safe subset to Markdown first.
- * (Avoid blanket tag-stripping — it breaks fenced code samples.)
- */
-function normalizeChatContent(content: string): string {
-  let s = content;
-
-  // Line breaks (also HTML entities models sometimes emit)
-  s = s.replace(/<br\s*\/?\s*>/gi, "\n");
-  s = s.replace(/&lt;br\s*\/?\s*&gt;/gi, "\n");
-
-  // Strikethrough tags → GFM ~~…~~
-  s = s.replace(
-    /<(?:del|s|strike)\b[^>]*>([\s\S]*?)<\/(?:del|s|strike)>/gi,
-    (_, inner: string) => `~~${inner}~~`,
-  );
-
-  // Common rich-text / WeChat inline line-through
-  s = s.replace(
-    /<span\b[^>]*style=["'][^"']*text-decoration:\s*line-through[^"']*["'][^>]*>([\s\S]*?)<\/span>/gi,
-    (_, inner: string) => `~~${inner}~~`,
-  );
-
-  return withHardLineBreaks(s);
-}
-
-const remarkPlugins = [remarkGfm];
+const remarkPlugins = [remarkGfm, remarkSafeBreaks];
 
 const markdownComponents: Components = {
   p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
@@ -109,7 +81,9 @@ const markdownComponents: Components = {
   ),
   table: ({ children }) => (
     <div className="mb-2 overflow-x-auto last:mb-0">
-      <table className="w-full border-collapse text-left text-sm">{children}</table>
+      <table className="w-full min-w-[48rem] border-collapse text-left text-sm">
+        {children}
+      </table>
     </div>
   ),
   th: ({ children }) => (
@@ -118,7 +92,9 @@ const markdownComponents: Components = {
     </th>
   ),
   td: ({ children }) => (
-    <td className="border border-current/20 px-2 py-1">{children}</td>
+    <td className="break-words border border-current/20 px-2 py-1 align-top">
+      {children}
+    </td>
   ),
   hr: () => <hr className="my-3 border-current/20" />,
 };
@@ -142,7 +118,7 @@ function ChatMarkdownInner({
           className,
         )}
       >
-        {normalizeChatContent(content)}
+        {normalizeStreamingChatContent(content)}
       </div>
     );
   }

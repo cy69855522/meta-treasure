@@ -1,8 +1,20 @@
 import { z } from "zod";
 import { tool, type ToolSet } from "@/lib/codex-tool";
-import { deepRadarFetch, fetchDeepRadarProgress } from "@/lib/deep-radar-client";
+import {
+  listFavoriteSnapshots,
+  listSessionSnapshots,
+  postProgressAction,
+  progressSnapshot,
+  reportSnapshot,
+  sessionSnapshot,
+  startResearchFromProgress,
+} from "@/features/deep-radar/lib/service";
 
-const sessionId = z.string().describe("Deep Radar 研究会话 id（来自 start/list/status）");
+const sessionId = z
+  .string()
+  .describe(
+    "Deep Radar 研究会话 id（来自 start/list/status，或收藏研究报告目录中的 id）",
+  );
 
 export function deepRadarTools(): ToolSet {
   return {
@@ -13,13 +25,8 @@ export function deepRadarTools(): ToolSet {
         brief: z.string().describe("研究需求全文，直接交给 Deep Radar"),
         title: z.string().optional().describe("可选会话标题；缺省截取需求开头"),
       }),
-      execute: async ({ brief, title }) => {
-        const data = await deepRadarFetch<{ session: unknown }>(
-          "/api/progress/sessions",
-          { method: "POST", body: { brief, title } },
-        );
-        return data.session;
-      },
+      execute: async ({ brief, title }) =>
+        startResearchFromProgress(brief, title),
     }),
 
     deepRadarList: tool({
@@ -27,10 +34,20 @@ export function deepRadarTools(): ToolSet {
       inputSchema: z.object({
         limit: z.number().int().min(1).max(100).optional().describe("最多条数，默认 30"),
       }),
-      execute: async ({ limit }) => {
-        const query = limit ? `?limit=${limit}` : "";
-        return deepRadarFetch(`/api/progress/sessions${query}`);
-      },
+      execute: async ({ limit }) => ({
+        sessions: listSessionSnapshots(limit ?? 30),
+      }),
+    }),
+
+    deepRadarFavoriteList: tool({
+      description:
+        "列出 Deep Radar 收藏夹中的研究报告（id、标题、摘要、打开报告的链接）。目录已注入系统提示；需要刷新或核对收藏时调用本工具。读取正文请用 deepRadarReport。",
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(200).optional().describe("最多条数，默认 50"),
+      }),
+      execute: async ({ limit }) => ({
+        favorites: listFavoriteSnapshots(limit ?? 50),
+      }),
     }),
 
     deepRadarStatus: tool({
@@ -38,10 +55,9 @@ export function deepRadarTools(): ToolSet {
         "查看某个 Deep Radar 研究会话的当前摘要（阶段、是否忙碌、轮次、有无报告、打开链接）。需要百分比和报告撰写进度时用 deepRadarProgress。",
       inputSchema: z.object({ sessionId }),
       execute: async ({ sessionId: id }) => {
-        const data = await deepRadarFetch<{ session: unknown }>(
-          `/api/progress/sessions/${encodeURIComponent(id)}`,
-        );
-        return data.session;
+        const session = sessionSnapshot(id);
+        if (!session) throw new Error("研究会话不存在");
+        return session;
       },
     }),
 
@@ -49,18 +65,21 @@ export function deepRadarTools(): ToolSet {
       description:
         "读取某个 Deep Radar 研究会话的实时进度：阶段、百分比、搜索轮次、报告撰写 turn/maxTurns、是否已结束。聊天气泡底部的进度条走同一接口。研究进行中（含撰写报告）可调用；已完成或失败后不必再查。",
       inputSchema: z.object({ sessionId }),
-      execute: async ({ sessionId: id }) => fetchDeepRadarProgress(id),
+      execute: async ({ sessionId: id }) => {
+        const progress = progressSnapshot(id);
+        if (!progress) throw new Error("研究会话不存在");
+        return progress;
+      },
     }),
 
     deepRadarReport: tool({
       description:
-        "读取某个 Deep Radar 会话的研究报告正文（可能被截断）以及打开报告位置的链接。没有报告时会说明尚未完成。",
+        "按 sessionId 读取 Deep Radar 研究报告正文（可能被截断）以及打开报告位置的链接。sessionId 可来自收藏研究报告目录、deepRadarFavoriteList 或 deepRadarList。没有报告时会说明尚未完成。",
       inputSchema: z.object({ sessionId }),
       execute: async ({ sessionId: id }) => {
-        const data = await deepRadarFetch<{ report: unknown }>(
-          `/api/progress/sessions/${encodeURIComponent(id)}/report`,
-        );
-        return data.report;
+        const report = reportSnapshot(id);
+        if (!report) throw new Error("研究会话不存在");
+        return report;
       },
     }),
 
@@ -72,13 +91,8 @@ export function deepRadarTools(): ToolSet {
         action: z.enum(["message", "approve", "continue", "report", "stop"]),
         text: z.string().optional().describe("action=message 时的消息正文"),
       }),
-      execute: async ({ sessionId: id, action, text }) => {
-        const data = await deepRadarFetch<{ session: unknown }>(
-          `/api/progress/sessions/${encodeURIComponent(id)}`,
-          { method: "POST", body: { action, text } },
-        );
-        return data.session;
-      },
+      execute: async ({ sessionId: id, action, text }) =>
+        postProgressAction(id, action, text),
     }),
   };
 }

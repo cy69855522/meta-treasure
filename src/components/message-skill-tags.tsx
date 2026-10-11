@@ -28,8 +28,8 @@ export function MessageLibraryTags({
 
   const chip =
     tone === "user"
-      ? "inline-flex items-center gap-1 rounded-full border border-primary-foreground/25 bg-primary-foreground/12 px-2 py-0.5 text-[11px] font-medium leading-4 text-primary-foreground"
-      : "inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/8 px-2 py-0.5 text-[11px] font-medium leading-4 text-primary";
+      ? "inline-flex max-w-full items-center gap-1 rounded-full border border-primary-foreground/25 bg-primary-foreground/12 px-2 py-0.5 text-[11px] font-medium leading-4 text-primary-foreground"
+      : "inline-flex max-w-full items-center gap-1 rounded-full border border-primary/20 bg-primary/8 px-2 py-0.5 text-[11px] font-medium leading-4 text-primary";
 
   const explanations = [
     ...skills.map((skill) => ({
@@ -50,7 +50,7 @@ export function MessageLibraryTags({
 
   return (
     <div className="mb-2 space-y-1.5" aria-label="本轮已挂载技能与规则">
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 overflow-hidden">
         {canFold ? (
           <button
             type="button"
@@ -78,8 +78,8 @@ export function MessageLibraryTags({
             title={`已加载技能：${skill.name}`}
             className={chip}
           >
-            <Sparkles className="size-3" aria-hidden />
-            /{skill.command}
+            <Sparkles className="size-3 shrink-0" aria-hidden />
+            <span className="truncate">/{skill.command}</span>
           </span>
         ))}
         {ruleParts.map((rule) => (
@@ -88,8 +88,8 @@ export function MessageLibraryTags({
             title={`已加载规则：${rule.name}`}
             className={chip}
           >
-            <ScrollText className="size-3" aria-hidden />
-            {rule.name}
+            <ScrollText className="size-3 shrink-0" aria-hidden />
+            <span className="truncate">{rule.name}</span>
           </span>
         ))}
       </div>

@@ -40,11 +40,25 @@
 
 **Project Piggy Bank**: Holding place for Projects the user is not actively pursuing; parked Projects are hidden from the main sidebar and excluded from Project Order. The Steward still sees their board and Agent Memory Notes in the piggy-bank snapshot. Users (and Steward tools) can move Projects in or out; restoring places a Project at the end of the active list.
 
-**Toolbox**: App section for standalone utilities and shortcuts (outside Project Agent / Steward chat). Currently opens the **Deep Radar** web app.
+**Toolbox**: App section for utilities and shortcuts outside Project Agent / Steward chat; its Deep Radar and Hot Radar cards open their integrated workspaces in new browser tabs.
 
-**Deep Radar**: Separate local web app at `http://127.0.0.1:3433/` (code under `/mnt/work/code/deep-radar`). Toolbox opens that app. Progress agents call Deep Radar's `/api/progress` bridge (`deepRadarStart` / `List` / `Status` / `Progress` / `Report` / `Act`) with a shared local token; `reportUrl` opens the session page at `#report`. A chat bubble that starts research embeds a progress bar that polls the same progress API until the job finishes or the fetch fails; report writing keeps updating.
+**Deep Radar**: Integrated Progress workspace for Deep Research, its Knowledge Base, and research settings; it opens in a new browser tab with its own focused navigation and does not include Skills or Rules management.
 
-**Deep Research package**: Internal `@progress/deep-research` library under `package/deep_research` used by agent `webSearch`/`fetchPages` (WeChat / Baidu / Google). Not a Toolbox UI. Not the Deep Radar research pipeline.
+**Codex Runtime**: The shared Progress execution environment and model catalog used by Project Agents, the Steward, and Deep Radar; each consumer may select its own model from that catalog.
+
+**Deep Radar Settings**: Research-specific configuration for the selected research model, maximum research rounds, and enabled information sources; visual theme remains a workspace-wide Progress setting.
+
+**Deep Radar Research Session**: One persistent Deep Research conversation, including its messages, research state, sources, and report; existing sessions remain available after Deep Radar is integrated into Progress.
+
+**Deep Radar Store**: The SQLite store owned by Deep Radar Research Sessions; it runs in the Progress process but remains separate from the Progress project-management store.
+
+**Deep Research package**: Internal `@progress/deep-research` search and extraction library under `package/deep_research`, shared by agent `webSearch`/`fetchPages` and the Deep Radar research pipeline.
+
+**Hot Radar**: Integrated Progress workspace for monitoring Reddit weekly hot posts and reading extracted post or linked-page text; it uses its own focused navigation and the Progress global theme.
+
+**Hot Radar Store**: Dedicated SQLite store for Reddit synchronization runs, ranked posts, and extracted text; it is accessed directly by the Progress process.
+
+**Hot Radar History**: Read-only weekly snapshots of automatically fetched Reddit rankings and extracted text, selected by fetch date from the Hot Radar right sidebar and browsable by subreddit in the main view.
 
 ## Relationships
 
@@ -54,9 +68,22 @@
 - A Project Agent conversation is a sequence of Agent Messages scoped to that Project.
 - The Steward conversation is a sequence of Steward Messages (not scoped to a Project).
 - Chat UI loads the latest 30 messages first; scrolling to the top loads 30 older messages at a time.
-- The Toolbox Deep Radar card opens the Deep Radar web app at `http://localhost:3433/` (new tab).
-- Progress agents drive Deep Radar through `/api/progress` (localhost + shared token): start research from a brief, list sessions, poll status and progress, read the report, and return `reportUrl` (`/research/{id}#report`). The assistant bubble polls `GET /api/deep-radar/progress/{sessionId}`, which calls Deep Radar `GET /api/progress/sessions/{id}/progress` (also exposed as `deepRadarProgress`).
-- Agent chat uses `@progress/deep-research` via `webSearch`/`fetchPages` (WeChat / Baidu / Google); there is no separate Deep Research Toolbox UI.
+- The Toolbox Deep Radar card opens the integrated Deep Radar workspace in a new browser tab.
+- The Toolbox Hot Radar card opens the integrated Hot Radar workspace in a new browser tab.
+- The Deep Radar browser tab uses its own focused shell rather than the Progress project sidebar; its navigation contains Settings, Favorites, Deep Research, and Knowledge Base.
+- Deep Radar contains Settings, Favorites, Deep Research, and Knowledge Base capabilities; Skills and Rules management remain Progress capabilities outside Deep Radar.
+- Favorited research reports are listed in Deep Radar Favorites and injected as an id/title/snippet catalog into Project Agent and Steward prompts; agents load full report bodies on demand via deepRadarReport.
+- Deep Radar research does not read or apply the Progress Skills Library or Rules Library.
+- Deep Radar uses the shared Progress Codex Runtime while retaining its own research-model selection.
+- The Progress theme applies to the Deep Radar workspace; Deep Radar Settings do not own a separate theme.
+- Agent chat uses `@progress/deep-research` via `webSearch`/`fetchPages`; Deep Radar reuses the same package inside its longer interview, outline, search-loop, and report workflow.
+- Existing Deep Radar Research Sessions are migrated into Progress once; after migration, Progress does not read research history from the old Deep Radar repository.
+- Progress and Deep Radar use separate SQLite stores within the same application process; this boundary does not involve a network or process bridge.
+- Hot Radar runs in the Progress application process, while its Reddit history remains in a dedicated Hot Radar Store.
+- Hot Radar starts its Reddit monitor when its workspace or synchronization API is first opened; it does not require a separate server.
+- Hot Radar refreshes only through its weekly system monitor; users cannot manually trigger or restart synchronization.
+- Each automatic weekly fetch remains available through Hot Radar History rather than replacing older dates.
+- The Progress theme applies to Hot Radar; Hot Radar does not own a second theme setting.
 - A Project has many Agent Memory Notes.
 - The Project Agent reads the live Task board; the board is not stored as Agent memory.
 - The Project Agent also reads a short recent Steward Message excerpt (read-only); project board and Agent Memory Notes remain the source of truth for that Project.
@@ -91,3 +118,11 @@
 - Read-only advisors — resolved: both may mutate via tools after user confirmation; they are not silent writers.
 - Project sorting — resolved: **Project Order** is a full-list reorder (not single-item move); Steward-only; the proposed order must list every active Project exactly once (incomplete lists are rejected); piggy-bank Projects are excluded.
 - Parked / shelved projects — resolved: domain term **Project Piggy Bank** (UI: 项目储蓄罐).
+- Deep Radar history migration — resolved: preserve and migrate all existing Deep Radar Research Sessions into Progress, with no runtime dependency on the old Deep Radar repository.
+- Deep Radar Skills/Rules boundary — resolved: do not migrate Deep Radar Skills or Rules, and do not inject Progress Skills or Rules into Deep Radar research.
+- Deep Radar Codex isolation — resolved: use the shared Progress Codex Runtime and model catalog instead of maintaining a second Deep Radar Codex Home and execution service.
+- Deep Radar theme/settings boundary — resolved: Progress owns the global theme; migrate Deep Radar's research model, maximum rounds, and information-source selections as Deep Radar Settings.
+- Deep Radar storage boundary — resolved: keep Deep Radar Research Sessions in a dedicated Deep Radar Store rather than merging their tables into the Progress project-management store.
+- Deep Radar workspace shell — resolved: open the integrated `/deep-radar` workspace in a new tab with its own three-item navigation and route research reports within that workspace.
+- Hot Radar runtime boundary — resolved: integrate it under `/hot-radar`, use the Progress process and global theme, retain a separate SQLite store, and remove the standalone 1315-port dependency.
+- Hot Radar refresh authority — resolved: only the system monitor may fetch new Reddit data; the UI and API expose no manual refresh operation, and older automatic snapshots remain read-only history.
