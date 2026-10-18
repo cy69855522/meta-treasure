@@ -30,7 +30,15 @@ const pending = new Map();
 const directTurns = new Map();
 let sequence = 0;
 function childEnvironment(extra = {}) {
-  const env = { ...process.env, ...extra, CODEX_HOME: progressCodexHome };
+  const env = {
+    ...process.env,
+    ...extra,
+    CODEX_HOME: progressCodexHome,
+    // bboluo.com / bboluo proxy 需要走 Clash Verge
+    http_proxy: 'http://127.0.0.1:7897',
+    https_proxy: 'http://127.0.0.1:7897',
+    no_proxy: 'localhost,127.0.0.1,::1,.local',
+  };
   // The bridge is launched by Next.js dev and otherwise leaks
   // NODE_ENV=development into `next build`. Let each child command choose its
   // own mode, as npm/Next.js normally does when launched from a shell.
