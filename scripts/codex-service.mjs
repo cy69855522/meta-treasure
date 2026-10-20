@@ -441,8 +441,18 @@ async function start(s, body, generation) {
     s.needsHistory = true;
   }
   if (toolsKey) s.toolsKey = toolsKey;
-  if (s.threadId) await rpc('thread/resume', { ...config, threadId: s.threadId });
-  else {
+  if (s.threadId) {
+    try { await rpc('thread/resume', { ...config, threadId: s.threadId }); }
+    catch (e) {
+      // thread is poisoned (stale, invalidated, or unreachable) — clear it and
+      // rebuild from compact history. Never leave a stuck threadId that will
+      // retry the same invalid state on the next request.
+      s.threadId = null;
+      s.needsHistory = true;
+      save(s);
+    }
+  }
+  if (!s.threadId) {
     const result = await rpc('thread/start', { ...config, dynamicTools: body.tools });
     if (s.generation !== generation) return;
     s.threadId = result.thread.id; save(s);
