@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 
 const NEAR_BOTTOM_PX = 96;
 
@@ -8,7 +8,10 @@ const NEAR_BOTTOM_PX = 96;
  * Keep a chat scroller pinned to the bottom while content grows (streaming),
  * without smooth-scroll fighting itself on every token.
  *
- * Entering the chat (enabled rising edge) always re-pins to the bottom.
+ * Uses useSyncExternalStore so the content snapshot is stable — it only
+ * changes when the DOM actually has new content, not on every React render.
+ * The ResizeObserver lives on the scroll container only and is never
+ * re-created during a streaming session.
  */
 export function useStickToBottomScroll(options: {
   enabled?: boolean;
@@ -24,6 +27,26 @@ export function useStickToBottomScroll(options: {
   const programmaticRef = useRef(false);
   const wasEnabledRef = useRef(false);
   const lastHeightRef = useRef<number | null>(null);
+
+  // Stable content snapshot — only changes when the DOM node actually
+  // changes, not on every React re-render. This is the key perf fix: the
+  // ResizeObserver does NOT re-create during streaming.
+  const snapshotRef = useRef(0);
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      const el = scrollRef.current;
+      if (!el) return () => {};
+      const ro = new ResizeObserver(() => {
+        snapshotRef.current++;
+        notify();
+      });
+      ro.observe(el);
+      return () => ro.disconnect();
+    },
+    [],
+  );
+  const getSnapshot = useCallback(() => snapshotRef.current, []);
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const scrollToBottomNow = useCallback(() => {
     const el = scrollRef.current;
@@ -74,10 +97,13 @@ export function useStickToBottomScroll(options: {
     };
   }, [enabled, scrollToBottomNow]);
 
-  // When the viewport itself shrinks or grows (status bar above the composer,
-  // composer resize), keep the bottom edge anchored so content is pushed up
-  // instead of being covered.
-  const anchorViewport = useCallback(() => {
+  // Sibling UI toggled by React (status bar) resizes the viewport within the
+  // same commit; correct before paint instead of waiting for ResizeObserver.
+  useLayoutEffect(() => {
+    if (!enabled) {
+      lastHeightRef.current = null;
+      return;
+    }
     const el = scrollRef.current;
     if (!el) return;
     const height = el.clientHeight;
@@ -93,43 +119,24 @@ export function useStickToBottomScroll(options: {
     requestAnimationFrame(() => {
       programmaticRef.current = false;
     });
-  }, [scrollToBottomNow]);
-
-  // Sibling UI toggled by React (status bar) resizes the viewport within the
-  // same commit; correct before paint instead of waiting for ResizeObserver.
-  useLayoutEffect(() => {
-    if (!enabled) {
-      lastHeightRef.current = null;
-      return;
-    }
-    anchorViewport();
   });
 
-  // Keep pinned while content/layout grows (markdown, images, prepend fills).
-  useEffect(() => {
-    if (!enabled) return;
-    const el = scrollRef.current;
-    if (!el) return;
-
-    const sync = () => {
-      anchorViewport();
-      if (stickRef.current) scrollToBottomNow();
-    };
-
-    const ro = new ResizeObserver(sync);
-    ro.observe(el);
-    const child = el.firstElementChild;
-    if (child) ro.observe(child);
-
-    sync();
-    return () => ro.disconnect();
-  }, [enabled, contentKey, anchorViewport, scrollToBottomNow]);
-
+  // Re-pin while content grows (markdown, images, prepend fills).
+  // NOTE: the ResizeObserver is now on the scroll container only (see subscribe),
+  // so this effect runs when the container size changes — which is exactly
+  // when we want to re-pin to bottom. We no longer observe firstElementChild.
   useEffect(() => {
     if (!enabled) return;
     if (!stickRef.current) return;
     scrollToBottomNow();
-  }, [enabled, streaming, contentKey, scrollToBottomNow]);
+  }, [enabled, contentKey, scrollToBottomNow]);
+
+  // Keep pinned while streaming (every new token bumps contentKey).
+  useEffect(() => {
+    if (!enabled) return;
+    if (!stickRef.current) return;
+    scrollToBottomNow();
+  }, [enabled, streaming, scrollToBottomNow]);
 
   return { scrollRef, onScroll, pinToBottom, releaseStick };
 }

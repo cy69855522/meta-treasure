@@ -16,6 +16,12 @@ type Props = {
   className?: string;
   /** While tokens arrive, skip markdown to avoid incomplete AST reflow jitter. */
   streaming?: boolean;
+  /**
+   * Ref to the outer wrapper. React 19 lets `memo` forward a ref prop
+   * without `forwardRef`, so callers can pass `useRef` directly.
+   * Used by the per-message screenshot button.
+   */
+  outerRef?: React.Ref<HTMLDivElement>;
 };
 
 const remarkPlugins = [remarkGfm, remarkSafeBreaks];
@@ -104,6 +110,7 @@ function ChatMarkdownInner({
   variant = "assistant",
   className,
   streaming = false,
+  outerRef,
 }: Props) {
   const isUser = variant === "user";
   const tone = isUser
@@ -113,6 +120,8 @@ function ChatMarkdownInner({
   if (streaming) {
     return (
       <div
+        ref={outerRef}
+        data-screenshot-exclude="0"
         className={cn(
           "chat-md text-base leading-relaxed break-words whitespace-pre-wrap",
           className,
@@ -125,6 +134,8 @@ function ChatMarkdownInner({
 
   return (
     <div
+      ref={outerRef}
+      data-screenshot-exclude="0"
       className={cn(
         "chat-md text-base leading-relaxed break-words",
         tone,

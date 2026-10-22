@@ -6,12 +6,7 @@ import {
   scrollChatMessageIntoView,
 } from "@/components/chat-history-search";
 import { CodexControls, CodexSettings } from "@/components/codex-controls";
-import {
-  isSkillMessagePart,
-  isRuleMessagePart,
-  isImageMessagePart,
-  type UIMessage,
-} from "@/lib/codex-types";
+import { type UIMessage } from "@/lib/codex-types";
 import {
   LoaderCircle,
   MessageSquare,
@@ -21,25 +16,11 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  AgentToolApprovalCard,
-  isAgentToolPart,
-  rejectPendingApprovalsInMessages,
-} from "@/components/agent-tool-approval";
+import { rejectPendingApprovalsInMessages } from "@/components/agent-tool-approval";
 import { ChatComposer, type ChatComposerHandle } from "@/components/chat-composer";
-import { ChatMarkdown } from "@/components/chat-markdown";
 import { useAgentChrome } from "@/components/agent-chrome";
 import { MemoryNotesStrip } from "@/components/memory-notes-strip";
-import { MessageCopyButton } from "@/components/message-copy-button";
-import { MessageRetryButton } from "@/components/message-retry-button";
-import { MessageRewindButton } from "@/components/message-rewind-button";
-import { MessageLibraryTags } from "@/components/message-skill-tags";
-import {
-  AssistantTimeline,
-  firstTextPreamble,
-} from "@/components/assistant-timeline";
-import { MessageImages } from "@/components/message-images";
-import { ResearchProgressBars } from "@/components/research-progress-bar";
+import { MessageBubble } from "@/components/message-bubble";
 import { Button } from "@/components/ui/button";
 import { useStickToBottomScroll } from "@/hooks/use-stick-to-bottom-scroll";
 import { useLoadOlderMessages } from "@/hooks/use-load-older-messages";
@@ -446,166 +427,40 @@ export function StewardPanel({
             ) : null}
 
             {messages.map((message, index) => {
-              const isUser = message.role === "user";
               const isLast = index === messages.length - 1;
               const streamingHere =
-                !isUser && isLast && status === "streaming";
-              const toolParts = message.parts.filter(isAgentToolPart);
-              const skillParts = message.parts.filter(isSkillMessagePart);
-              const ruleParts = message.parts.filter(isRuleMessagePart);
-              const imageParts = message.parts.filter(isImageMessagePart);
-              const mountedNames = [
-                ...skillParts.flatMap((s) => [s.name, s.command]),
-                ...ruleParts.map((r) => r.name),
-              ];
-              const { preamble } = !isUser
-                ? firstTextPreamble(message.parts, mountedNames, streamingHere)
-                : { preamble: null };
-              const text = message.parts
-                .filter(
-                  (p): p is { type: "text"; text: string } => p.type === "text",
-                )
-                .map((p) => p.text)
-                .join("");
+                message.role !== "user" && isLast && status === "streaming";
               return (
-                <div
+                <MessageBubble
                   key={message.id}
-                  id={`msg-${message.id}`}
-                  className={cn(
-                    "flex scroll-mt-4 rounded-2xl",
-                    isUser ? "justify-end" : "justify-start",
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "rounded-2xl px-4 py-3 shadow-sm",
-                      CHAT_BUBBLE_MAX_CLASS,
-                      isUser
-                        ? "rounded-br-md bg-primary text-primary-foreground"
-                        : "w-full rounded-bl-md bg-muted text-foreground",
-                    )}
-                  >
-                    {!isUser ? (
-                      <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
-                        总管家
-                      </p>
-                    ) : null}
-                    {!isUser ? (
-                      <MessageLibraryTags
-                        skills={skillParts}
-                        rules={ruleParts}
-                        preamble={preamble}
-                        streamingPreamble={
-                          streamingHere && Boolean(preamble)
-                        }
-                      />
-                    ) : null}
-                    <MessageImages images={imageParts} />
-                    {isUser ? (
-                      text || streamingHere ? (
-                        <div className="relative">
-                          {text ? (
-                            <ChatMarkdown
-                              content={text}
-                              variant="user"
-                              streaming={streamingHere}
-                            />
-                          ) : null}
-                          {streamingHere ? (
-                            <span
-                              aria-hidden
-                              className="ml-0.5 inline-block h-[1.05em] w-0.5 animate-pulse bg-foreground/70 align-[-0.1em]"
-                            />
-                          ) : null}
-                        </div>
-                      ) : null
-                    ) : (
-                      <AssistantTimeline
-                        parts={message.parts}
-                        mountedNames={mountedNames}
-                        streaming={streamingHere}
-                      />
-                    )}
-                    {!isUser
-                      ? toolParts
-                          .filter((part) => {
-                            const name =
-                              "toolName" in part && typeof part.toolName === "string"
-                                ? part.toolName
-                                : String(part.type).replace(/^tool-/, "");
-                            return (
-                              name !== "webSearch" &&
-                              name !== "fetchPages" &&
-                              name !== "fetchUrl" &&
-                              !name.startsWith("deepRadar")
-                            );
-                          })
-                          .map((part) => (
-                          <AgentToolApprovalCard
-                            key={String(
-                              "toolCallId" in part && part.toolCallId
-                                ? part.toolCallId
-                                : part.type,
-                            )}
-                            part={part}
-                            scope="steward"
-                            onRespond={addToolApprovalResponse}
-                            onApplied={onToolApplied}
-                          />
-                        ))
-                      : null}
-                    {!isUser ? (
-                      <ResearchProgressBars
-                        parts={message.parts}
-                        disabled={busy}
-                        onReadReport={(job) => {
-                          if (busy) return;
-                          clearError();
-                          pinToBottom();
-                          setMessages((prev) =>
-                            rejectPendingApprovalsInMessages(prev),
-                          );
-                          void sendMessage({
-                            text: [
-                              `请用 deepRadarReport 读取研究会话 ${job.sessionId} 的报告正文，`,
-                              "提炼关键结论与可行动建议，然后基于这份报告继续和我对话。",
-                              job.reportUrl
-                                ? `报告链接：${job.reportUrl}`
-                                : "",
-                            ]
-                              .filter(Boolean)
-                              .join(""),
-                            images: [],
-                          });
-                        }}
-                      />
-                    ) : null}
-                    {text.trim() || toolParts.length === 0 ? (
-                      <div className="mt-2 flex justify-end gap-0.5">
-                        <MessageCopyButton
-                          text={text}
-                          tone={isUser ? "onPrimary" : "default"}
-                        />
-                        {toolParts.length === 0 ? (
-                          <>
-                            {isUser ? (
-                              <MessageRetryButton
-                                disabled={busy}
-                                onRetry={() => retryFromMessage(index)}
-                                tone="onPrimary"
-                              />
-                            ) : null}
-                            <MessageRewindButton
-                              disabled={busy}
-                              onRewind={() => rewindToMessage(index)}
-                              tone={isUser ? "onPrimary" : "default"}
-                            />
-                          </>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
+                  message={message}
+                  streamingHere={streamingHere}
+                  busy={busy}
+                  scope="steward"
+                  senderLabel="总管家"
+                  onToolApprovalResponse={addToolApprovalResponse}
+                  onToolApplied={onToolApplied}
+                  onRetry={() => retryFromMessage(index)}
+                  onRewind={() => rewindToMessage(index)}
+                  onReadResearchReport={(job) => {
+                    if (busy) return;
+                    clearError();
+                    pinToBottom();
+                    setMessages((prev) =>
+                      rejectPendingApprovalsInMessages(prev),
+                    );
+                    void sendMessage({
+                      text: [
+                        `请用 deepRadarReport 读取研究会话 ${job.sessionId} 的报告正文，`,
+                        "提炼关键结论与可行动建议，然后基于这份报告继续和我对话。",
+                        job.reportUrl ? `报告链接：${job.reportUrl}` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(""),
+                      images: [],
+                    });
+                  }}
+                />
               );
             })}
 

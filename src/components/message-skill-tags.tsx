@@ -28,8 +28,8 @@ export function MessageLibraryTags({
 
   const chip =
     tone === "user"
-      ? "inline-flex max-w-full items-center gap-1 rounded-full border border-primary-foreground/25 bg-primary-foreground/12 px-2 py-0.5 text-[11px] font-medium leading-4 text-primary-foreground"
-      : "inline-flex max-w-full items-center gap-1 rounded-full border border-primary/20 bg-primary/8 px-2 py-0.5 text-[11px] font-medium leading-4 text-primary";
+      ? "inline-flex max-w-full items-center gap-1 rounded-full border border-primary-foreground/25 bg-primary-foreground/12 px-2 py-0.5 text-[11px] font-medium leading-5 text-primary-foreground"
+      : "inline-flex max-w-full items-center gap-1 rounded-full border border-primary/20 bg-primary/8 px-2 py-0.5 text-[11px] font-medium leading-5 text-primary";
 
   const explanations = [
     ...skills.map((skill) => ({
@@ -103,7 +103,7 @@ export function MessageLibraryTags({
         </div>
       ) : null}
       {foldOpen && !hasPreamble && explanations.length > 0 ? (
-        <ul className="space-y-1.5 text-[12px] leading-5 text-foreground/85">
+        <ul className="space-y-1.5 text-xs leading-5 text-foreground/85">
           {explanations.map((item) => (
             <li key={item.key}>
               <span className="font-medium text-foreground">{item.title}</span>
