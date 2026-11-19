@@ -2,7 +2,7 @@ export function extractJson<T>(text: string): T {
   // 优先提取 markdown 代码块中的 JSON
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const raw = (fenced?.[1] ?? text).trim();
-  
+
   // 查找所有可能的 JSON 对象（必须以 { 开头且包含 : 或 " 表明是对象而非 LaTeX）
   const candidates: string[] = [];
   for (let i = 0; i < raw.length; i++) {
@@ -32,6 +32,15 @@ export function extractJson<T>(text: string): T {
 
   // 尝试解析每个候选 JSON
   for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate) as T;
+    } catch {
+      // 继续尝试下一个候选
+    }
+  }
+
+  // 候选是数组时也接受（部分模型会返回顶层数组）
+  for (const candidate of raw.match(/\[[\s\S]*\]/g) ?? []) {
     try {
       return JSON.parse(candidate) as T;
     } catch {

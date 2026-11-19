@@ -67,4 +67,31 @@ export type CodexCatalogModel = {
   isDefault?: boolean;
 };
 export type CodexRequest = { id: string | number; method: string; preview?: import("@/lib/agent-tools-types").ActionPreview; params: Record<string, unknown> };
-export type CodexState = { scope: string; messages: UIMessage[]; requests: CodexRequest[]; status: "ready" | "submitted" | "streaming" | "error"; error?: string; cwd?: string | null; modelId?: string | null; model?: string | null; modelProvider?: string | null };
+
+export type CodexStatus = "ready" | "submitted" | "streaming" | "error";
+
+export type CodexState = {
+  scope: string;
+  /** Change counter: equal `rev` means nothing the client can see has changed. */
+  rev: number;
+  messages: UIMessage[];
+  /** Only requests a person must decide; auto-approved and in-flight ones are filtered out. */
+  requests: CodexRequest[];
+  status: CodexStatus;
+  error?: string | null;
+  cwd?: string | null;
+  modelId?: string | null;
+  model?: string | null;
+  modelProvider?: string | null;
+};
+
+/** What GET /api/codex/[scope]?since=<rev> answers. */
+export type CodexPoll = CodexState | { unchanged: true; rev: number };
+
+/** Every command the browser can send to POST /api/codex/[scope]. */
+export type CodexAction =
+  | { action: "start"; text: string; images?: unknown[]; retry?: boolean; modelId?: string }
+  | { action: "model"; modelId: string }
+  | { action: "directory"; cwd: string }
+  | { action: "respond"; id: string | number; approved: boolean; answers?: Record<string, { answers: string[] }> }
+  | { action: "stop" };

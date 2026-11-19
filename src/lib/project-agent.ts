@@ -92,7 +92,8 @@ function clipHandoffText(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "（空）";
   if (trimmed.length <= STEWARD_HANDOFF_MESSAGE_MAX_CHARS) return trimmed;
-  return `${trimmed.slice(0, STEWARD_HANDOFF_MESSAGE_MAX_CHARS)}…`;
+  // toWellFormed: the cut may land inside an emoji's surrogate pair.
+  return `${trimmed.slice(0, STEWARD_HANDOFF_MESSAGE_MAX_CHARS).toWellFormed()}…`;
 }
 
 /** Recent Steward dialogue for Project Agent context (read-only handoff). */

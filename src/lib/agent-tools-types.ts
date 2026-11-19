@@ -61,9 +61,3 @@ export type FunctionToolCatalogItem = {
 export function isAgentToolName(name: string): name is AgentToolName {
   return (AGENT_TOOL_NAMES as readonly string[]).includes(name);
 }
-
-export function toolNameFromPartType(partType: string): string | null {
-  if (partType.startsWith("tool-")) return partType.slice("tool-".length);
-  if (partType === "dynamic-tool") return null;
-  return null;
-}

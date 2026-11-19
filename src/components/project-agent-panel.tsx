@@ -17,15 +17,16 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { rejectPendingApprovalsInMessages } from "@/components/agent-tool-approval";
 import { ChatComposer, type ChatComposerHandle } from "@/components/chat-composer";
 import { useAgentChrome } from "@/components/agent-chrome";
 import { MemoryNotesStrip } from "@/components/memory-notes-strip";
 import { MessageBubble } from "@/components/message-bubble";
 import { Button } from "@/components/ui/button";
+import { useElapsedSeconds } from "@/hooks/use-elapsed-seconds";
 import { useStickToBottomScroll } from "@/hooks/use-stick-to-bottom-scroll";
 import { useLoadOlderMessages } from "@/hooks/use-load-older-messages";
 import { CHAT_HISTORY_PAGE_SIZE, CHAT_COLUMN_CLASS, CHAT_BUBBLE_MAX_CLASS } from "@/lib/constants";
+import { formatWaited, turnStatusLabel } from "@/lib/turn-status-label";
 import { partsFromStoredMessage } from "@/lib/chat-message-parts";
 import type { AgentMemoryNote, AgentMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -44,12 +45,6 @@ function uiMessageText(message: UIMessage): string {
     .map((p) => p.text)
     .join("")
     .trim();
-}
-
-function statusLabel(status: string): string | null {
-  if (status === "submitted") return "已发送，等待模型推理…";
-  if (status === "streaming") return "模型推理中，正在流式回复…";
-  return null;
 }
 
 type Props = {
@@ -97,9 +92,9 @@ export function ProjectAgentPanel({
     error,
     clearError,
     stop,
-    addToolApprovalResponse,
+    respond,
     codexState,
-    codexAction,
+    setDirectory,
     modelOptions,
     setModel,
   } = useCodexChat({scope:projectId,initialMessages:toUIMessages(initialMessages)});
@@ -214,8 +209,7 @@ export function ProjectAgentPanel({
           messages: AgentMessage[];
           hasMore?: boolean;
         };
-        const next = toUIMessages(data.messages);
-        setMessages(rejectPendingApprovalsInMessages(next));
+        setMessages(toUIMessages(data.messages));
         setHasMoreHistory(Boolean(data.hasMore));
         await regenerate({ messageId: target.id });
       } catch (err) {
@@ -229,7 +223,8 @@ export function ProjectAgentPanel({
   );
 
   const busy = status === "submitted" || status === "streaming" || rewinding;
-  const thinkingLabel = statusLabel(status);
+  const elapsedSeconds = useElapsedSeconds(status === "submitted" || status === "streaming");
+  const thinkingLabel = turnStatusLabel(status, elapsedSeconds);
   const lastAssistantText =
     [...messages].reverse().find((m) => m.role === "assistant")?.parts
       .filter((p): p is { type: "text"; text: string } => p.type === "text")
@@ -351,9 +346,6 @@ export function ProjectAgentPanel({
     if ((!message.text && !message.images.length) || busy) return;
     clearError();
     pinToBottom();
-    // Sending a new turn without clicking 拒绝 must deny pending tools,
-    // otherwise convertToModelMessages throws MissingToolResultsError.
-    setMessages((prev) => rejectPendingApprovalsInMessages(prev));
     void sendMessage(message);
   }
 
@@ -463,8 +455,8 @@ export function ProjectAgentPanel({
               />
               <CodexSettings
                 state={codexState}
-                action={codexAction}
                 modelOptions={modelOptions}
+                onDirectoryChange={setDirectory}
                 onModelChange={setModel}
               />
               <Button
@@ -522,20 +514,13 @@ export function ProjectAgentPanel({
                       message={message}
                       streamingHere={streamingHere}
                       busy={busy}
-                      scope="project"
-                      projectId={projectId}
                       senderLabel="顾问"
-                      onToolApprovalResponse={addToolApprovalResponse}
-                      onToolApplied={onToolApplied}
                       onRetry={() => retryFromMessage(index)}
                       onRewind={() => rewindToMessage(index)}
                       onReadResearchReport={(job) => {
                         if (busy) return;
                         clearError();
                         pinToBottom();
-                        setMessages((prev) =>
-                          rejectPendingApprovalsInMessages(prev),
-                        );
                         void sendMessage({
                           text: [
                             `请用 deepRadarReport 读取研究会话 ${job.sessionId} 的报告正文，`,
@@ -560,7 +545,9 @@ export function ProjectAgentPanel({
                       )}
                     >
                       <LoaderCircle className="size-3.5 animate-spin" />
-                      模型推理中…
+                      <span className="tabular-nums">
+                        模型推理中…{elapsedSeconds == null ? "" : ` ${formatWaited(elapsedSeconds)}`}
+                      </span>
                     </div>
                   </div>
                 ) : null}
@@ -575,7 +562,7 @@ export function ProjectAgentPanel({
                 {thinkingLabel ? (
                   <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground md:px-6">
                     <LoaderCircle className="size-3 animate-spin" />
-                    <span className="flex-1">{thinkingLabel}</span>
+                    <span className="flex-1 tabular-nums">{thinkingLabel}</span>
                     {busy ? (
                       <button
                         type="button"
@@ -599,7 +586,7 @@ export function ProjectAgentPanel({
                 onSubmit={submitChat}
                 />
               </div>
-              <CodexControls state={codexState} action={codexAction} onApplied={onToolApplied} />
+              <CodexControls state={codexState} onRespond={respond} onApplied={onToolApplied} />
             </div>
           ) : (
             <MemoryNotesStrip

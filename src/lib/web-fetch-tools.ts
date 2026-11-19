@@ -475,9 +475,21 @@ function failed(url: string, error: string, raw?: RawResponse): PageResult {
   };
 }
 
+function hostsOf(urls: string[]): string[] {
+  const hosts = urls.map((url) => {
+    try {
+      return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`).hostname;
+    } catch {
+      return "";
+    }
+  });
+  return [...new Set(hosts.filter(Boolean))];
+}
+
 export function webFetchTools(): ToolSet {
   return {
     fetchUrl: tool({
+      autoApprove: true,
       description:
         "直接访问指定网址并读取页面正文（标题、描述、正文文本，可选页内链接）。用户给出具体 URL、或你已知道目标页面地址时，必须优先用它直接读取，而不是用 webSearch 搜 site:。先直接请求，遇到反爬/JS 渲染页面会自动用本机无头浏览器重试。支持 HTML、纯文本、Markdown、JSON；长页面可用 startChar 分段续读。",
       inputSchema: z.object({
@@ -528,6 +540,22 @@ export function webFetchTools(): ToolSet {
             : "根据读取到的正文作答；读取失败的页面要如实告知，不要编造内容。",
         };
       },
+      begin: ({ urls }, { callId }) => ({
+        search: { id: callId, sources: hostsOf(urls), status: "fetching", phase: "visit" },
+      }),
+      present: (_input, output, { callId }) => ({
+        search: {
+          id: output.searchId || callId,
+          sources: hostsOf(output.pages.map((page) => page.finalUrl || page.url)),
+          phase: "visit",
+          pages: output.pages.map((page) => ({
+            url: page.url,
+            title: page.title || page.url,
+            text: page.text,
+            ...(page.error ? { error: page.error } : {}),
+          })),
+        },
+      }),
     }),
   };
 }

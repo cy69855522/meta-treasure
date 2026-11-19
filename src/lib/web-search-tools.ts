@@ -29,6 +29,7 @@ function clipText(text: string, max = TEXT_CLIP) {
 export function webSearchTools(): ToolSet {
   return {
     webSearch: tool({
+      autoApprove: true,
       description:
         "网页搜索（第一阶段）：按来源检索候选链接（标题/URL/摘要），不打开正文。sources 可选 wechat（微信公众号）、baidu（百度）、google（谷歌）；可多选。拿到结果后，再用 fetchPages 批量抽取需要的页面正文。",
       inputSchema: z.object({
@@ -83,9 +84,29 @@ export function webSearchTools(): ToolSet {
             "若需正文，调用 fetchPages，传入本结果的 searchId 与要打开的 url 列表（可带来源 source）。",
         };
       },
+      begin: ({ query, sources }, { callId }) => ({
+        search: { id: callId, query, sources, status: "searching", phase: "search" },
+      }),
+      present: (_input, output) => ({
+        search: {
+          id: output.searchId,
+          query: output.query,
+          sources: output.sources,
+          hits: output.hits.map((hit) => ({
+            id: hit.id,
+            source: hit.source,
+            title: hit.title,
+            url: hit.url,
+            ...(hit.snippet ? { snippet: hit.snippet } : {}),
+          })),
+          pages: [],
+          phase: "search",
+        },
+      }),
     }),
 
     fetchPages: tool({
+      autoApprove: true,
       description:
         "网页抽取（第二阶段）：对 webSearch 返回的候选链接批量抓取正文。每次最多 6 个 URL；优先选高相关链接。应传入上一轮的 searchId 以便界面归并展示。",
       inputSchema: z.object({
@@ -145,6 +166,22 @@ export function webSearchTools(): ToolSet {
           next: "根据抽取正文作答；不要假装访问了未抽取的链接。",
         };
       },
+      begin: ({ searchId }, { callId }) => ({
+        search: { id: searchId || callId, status: "fetching", phase: "fetch" },
+      }),
+      present: ({ searchId }, output, { callId }) => ({
+        search: {
+          id: output.searchId || searchId || callId,
+          phase: "fetch",
+          pages: output.pages.map((page) => ({
+            url: page.url,
+            title: page.title || page.url,
+            source: page.source,
+            text: page.text,
+            ...("error" in page && page.error ? { error: page.error } : {}),
+          })),
+        },
+      }),
     }),
   };
 }

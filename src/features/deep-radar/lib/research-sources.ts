@@ -134,7 +134,7 @@ export type FindingsToolDecision =
     };
 
 export function parseFindingsTool(text: string): FindingsToolDecision {
-  const parsed = extractJson<{
+  let parsed: {
     tool?: string;
     urls?: unknown;
     url?: string;
@@ -145,7 +145,22 @@ export function parseFindingsTool(text: string): FindingsToolDecision {
     gaps?: string;
     keywords?: string[];
     shouldStop?: boolean;
-  }>(text);
+  };
+  try {
+    parsed = extractJson<typeof parsed>(text);
+  } catch (error) {
+    // 书记员偶尔会忽略 JSON 约定，直接输出正文。此时把正文当作本轮总结，
+    // 让研究继续走下去，而不是因为格式问题把整轮冻结。
+    const fallback = text.trim();
+    if (!fallback) throw error;
+    return {
+      tool: "submit_findings",
+      summary: fallback,
+      analysis: "",
+      keywords: [],
+      shouldStop: false,
+    };
+  }
 
   const tool = (parsed.tool || "").trim();
   if (tool === "read_sources") {

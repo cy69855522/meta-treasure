@@ -38,6 +38,20 @@ describe("research sources tools", () => {
     });
   });
 
+  it("falls back to plain prose when the model ignores the JSON contract", () => {
+    const decision = parseFindingsTool(
+      "针对 3D DiT 训练中网格解析与体素化引发 GPU 饥饿，工业界建立了离线 Latent Cache 预编码管线。",
+    );
+    expect(decision.tool).toBe("submit_findings");
+    if (decision.tool !== "submit_findings") throw new Error("unexpected tool");
+    expect(decision.summary).toContain("Latent Cache");
+    expect(decision.shouldStop).toBe(false);
+  });
+
+  it("still throws when the model returns nothing at all", () => {
+    expect(() => parseFindingsTool("   ")).toThrow(/模型没有返回有效的 JSON 对象/);
+  });
+
   it("caps one read_sources batch", () => {
     const state = createInitialState();
     state.links = Array.from({ length: 8 }, (_, i) => ({

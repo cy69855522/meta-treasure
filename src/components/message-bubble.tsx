@@ -2,12 +2,6 @@
 
 import { memo, useRef } from "react";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import {
-  AgentToolApprovalCard,
-  isAgentToolPart,
-  rejectPendingApprovalsInMessages,
-} from "@/components/agent-tool-approval";
-import { type ActionAffects, type AgentToolScope } from "@/lib/agent-tools-types";
 import { MessageImages } from "@/components/message-images";
 import { MessageLibraryTags } from "@/components/message-skill-tags";
 import { MessageCopyButton } from "@/components/message-copy-button";
@@ -22,22 +16,8 @@ import {
   isRuleMessagePart,
   isSkillMessagePart,
   type UIMessage,
-  type UIMessagePart,
 } from "@/lib/codex-types";
 import { cn } from "@/lib/utils";
-
-function shouldRenderToolPart(part: UIMessagePart): boolean {
-  const name =
-    "toolName" in part && typeof part.toolName === "string"
-      ? part.toolName
-      : String(part.type).replace(/^tool-/, "");
-  return (
-    name !== "webSearch" &&
-    name !== "fetchPages" &&
-    name !== "fetchUrl" &&
-    !name.startsWith("deepRadar")
-  );
-}
 
 /**
  * One chat message bubble. Memoized so parent state changes (streaming status,
@@ -47,10 +27,6 @@ export const MessageBubble = memo(function MessageBubble({
   message,
   streamingHere,
   busy,
-  scope,
-  projectId,
-  onToolApprovalResponse,
-  onToolApplied,
   onRetry,
   onRewind,
   onReadResearchReport,
@@ -59,11 +35,6 @@ export const MessageBubble = memo(function MessageBubble({
   message: UIMessage;
   streamingHere: boolean;
   busy: boolean;
-  scope: AgentToolScope;
-  /** Required when scope === "project". Ignored otherwise. */
-  projectId?: string;
-  onToolApprovalResponse: (decision: { id: string; approved: boolean }) => void;
-  onToolApplied: (affects: ActionAffects) => void;
   onRetry: () => void;
   onRewind: () => void;
   onReadResearchReport: Parameters<
@@ -73,7 +44,6 @@ export const MessageBubble = memo(function MessageBubble({
   senderLabel?: string;
 }) {
   const isUser = message.role === "user";
-  const toolParts = message.parts.filter(isAgentToolPart);
   const skillParts = message.parts.filter(isSkillMessagePart);
   const ruleParts = message.parts.filter(isRuleMessagePart);
   const imageParts = message.parts.filter(isImageMessagePart);
@@ -152,24 +122,6 @@ export const MessageBubble = memo(function MessageBubble({
             outerRef={bubbleContentRef}
           />
         )}
-        {!isUser
-          ? toolParts
-              .filter((part) => shouldRenderToolPart(part))
-              .map((part) => (
-                <AgentToolApprovalCard
-                  key={String(
-                    "toolCallId" in part && part.toolCallId
-                      ? part.toolCallId
-                      : part.type,
-                  )}
-                  part={part}
-                  scope={scope}
-                  projectId={projectId}
-                  onRespond={onToolApprovalResponse}
-                  onApplied={onToolApplied}
-                />
-              ))
-          : null}
         {!isUser ? (
           <ResearchProgressBars
             parts={message.parts}
@@ -177,41 +129,31 @@ export const MessageBubble = memo(function MessageBubble({
             onReadReport={onReadResearchReport}
           />
         ) : null}
-        {text.trim() || toolParts.length === 0 ? (
-          <div className="mt-2 flex justify-start gap-0.5">
-            {!isUser ? (
-              <MessageScreenshotButton
-                targetRef={bubbleContentRef}
-                tone="default"
-              />
-            ) : null}
-            <MessageCopyButton
-              text={text}
-              tone={isUser ? "onPrimary" : "default"}
+        <div className="mt-2 flex justify-start gap-0.5">
+          {!isUser ? (
+            <MessageScreenshotButton
+              targetRef={bubbleContentRef}
+              tone="default"
             />
-            {toolParts.length === 0 ? (
-              <>
-                {isUser ? (
-                  <MessageRetryButton
-                    disabled={busy}
-                    onRetry={onRetry}
-                    tone="onPrimary"
-                  />
-                ) : null}
-                <MessageRewindButton
-                  disabled={busy}
-                  onRewind={onRewind}
-                  tone={isUser ? "onPrimary" : "default"}
-                />
-              </>
-            ) : null}
-          </div>
-        ) : null}
+          ) : null}
+          <MessageCopyButton
+            text={text}
+            tone={isUser ? "onPrimary" : "default"}
+          />
+          {isUser ? (
+            <MessageRetryButton
+              disabled={busy}
+              onRetry={onRetry}
+              tone="onPrimary"
+            />
+          ) : null}
+          <MessageRewindButton
+            disabled={busy}
+            onRewind={onRewind}
+            tone={isUser ? "onPrimary" : "default"}
+          />
+        </div>
       </div>
     </div>
   );
 });
-
-// Re-export so call sites that need to keep the old in-map reorder guard
-// (rejectPendingApprovalsInMessages) stay in sync.
-export { rejectPendingApprovalsInMessages };

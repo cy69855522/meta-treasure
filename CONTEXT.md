@@ -46,6 +46,14 @@
 
 **Codex Runtime**: The shared Progress execution environment and model catalog used by Project Agents, the Steward, and Deep Radar; each consumer may select its own model from that catalog.
 
+**Codex Service**: The long-lived local process (`scripts/codex-service.mjs`) that owns the Codex Runtime's `codex app-server` child, the persisted conversation of each scope, and the unix-socket API used by chat and Deep Radar. It is versioned by a single `scripts/codex-service/version.json` read by the service and every client; a version mismatch is the only reason a client may replace a running service.
+
+**Tool Request**: A pending call from the model to a Progress tool, held by the Codex Service until someone answers it. Exactly one party owns it at a time through a **Request Lease** (`claim`); losing a claim is a normal outcome, and answering a request twice is a no-op.
+
+**Auto-approved Tool**: A tool that declares `autoApprove` on its own definition (read-only tools: skill/rule reads, web search/fetch, Deep Radar tools). The **Tool Pump** — one background loop per conversation on the Next.js side, independent of any browser — runs these and never shows them to the user. Every other Tool Request waits for a person.
+
+**Presentation**: What a tool tells the chat to show for one call (a progress bar while it runs, then its search hits/pages, a mounted skill/rule tag, or a research progress bar). Tools supply it (`begin`/`present`); the Codex Service renders it generically and knows no tool names.
+
 **Deep Radar Settings**: Research-specific configuration for the selected research model, maximum research rounds, and enabled information sources; visual theme remains a workspace-wide Progress setting.
 
 **Deep Radar Research Session**: One persistent Deep Research conversation, including its messages, research state, sources, and report; existing sessions remain available after Deep Radar is integrated into Progress.
@@ -120,6 +128,7 @@
 - Parked / shelved projects — resolved: domain term **Project Piggy Bank** (UI: 项目储蓄罐).
 - Deep Radar history migration — resolved: preserve and migrate all existing Deep Radar Research Sessions into Progress, with no runtime dependency on the old Deep Radar repository.
 - Deep Radar Skills/Rules boundary — resolved: do not migrate Deep Radar Skills or Rules, and do not inject Progress Skills or Rules into Deep Radar research.
+- Tool approval ownership — resolved: the chat has one approval surface (the confirmation dialog for non-auto-approved Tool Requests); the old inline approval card in message bubbles was dead code and is removed. Requests being run by the Tool Pump or another claimer are never shown.
 - Deep Radar Codex isolation — resolved: use the shared Progress Codex Runtime and model catalog instead of maintaining a second Deep Radar Codex Home and execution service.
 - Deep Radar theme/settings boundary — resolved: Progress owns the global theme; migrate Deep Radar's research model, maximum rounds, and information-source selections as Deep Radar Settings.
 - Deep Radar storage boundary — resolved: keep Deep Radar Research Sessions in a dedicated Deep Radar Store rather than merging their tables into the Progress project-management store.

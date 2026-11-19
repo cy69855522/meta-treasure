@@ -9,15 +9,17 @@ import { cn } from "@/lib/utils";
 
 type Props = {
   state?: CodexState;
-  action: (body: object) => Promise<CodexState>;
+  /** Resolves true if the answer was accepted. Never rejects; failures surface in the chat error. */
+  onRespond: (id: string | number, approved: boolean, answers?: Record<string, string>) => Promise<boolean>;
   onApplied?: (affects: ActionAffects) => void;
 };
 
 type SettingsProps = {
   state?: CodexState;
-  action: (body: object) => Promise<CodexState>;
   modelOptions: CodexModelOption[];
-  onModelChange: (modelId: string) => Promise<void>;
+  /** Both resolve true on success and never reject. */
+  onDirectoryChange: (cwd: string) => Promise<boolean>;
+  onModelChange: (modelId: string) => Promise<boolean>;
 };
 
 const buttonClass = "inline-flex items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
@@ -28,7 +30,7 @@ function requestTitle(request: CodexRequest): string {
   return "操作确认";
 }
 
-export function CodexSettings({ state, action, modelOptions, onModelChange }: SettingsProps) {
+export function CodexSettings({ state, modelOptions, onDirectoryChange, onModelChange }: SettingsProps) {
   const currentModelId = state?.modelId && modelOptions.some((option) => option.id === state.modelId) ? state.modelId : modelOptions[0]?.id || "";
   const [open, setOpen] = useState(false);
   const [cwd, setCwd] = useState("");
@@ -49,12 +51,13 @@ export function CodexSettings({ state, action, modelOptions, onModelChange }: Se
   async function saveSettings() {
     setSaving(true);
     try {
-      if (cwd.trim() && cwd.trim() !== state?.cwd) await action({ action: "directory", cwd: cwd.trim() });
-      if (modelId && modelId !== currentModelId) await onModelChange(modelId);
+      // A failure keeps the dialog open; the shared chat error banner explains why.
+      if (cwd.trim() && cwd.trim() !== state?.cwd && !(await onDirectoryChange(cwd.trim()))) return;
+      if (modelId && modelId !== currentModelId && !(await onModelChange(modelId))) return;
       setOpen(false);
+    } finally {
+      setSaving(false);
     }
-    catch { /* The shared chat error banner shows the validation message. */ }
-    finally { setSaving(false); }
   }
 
   return (
@@ -102,23 +105,25 @@ export function CodexSettings({ state, action, modelOptions, onModelChange }: Se
   );
 }
 
-export function CodexControls({ state, action, onApplied }: Props) {
+export function CodexControls({ state, onRespond, onApplied }: Props) {
   const [pending, setPending] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const requests = state?.requests || [];
   const batchable = requests.filter((request) => !request.method.includes("UserInput"));
 
+  const applied = (request: CodexRequest, approved: boolean) => {
+    if (approved && request.method === "item/tool/call" && request.preview?.affects) {
+      onApplied?.(request.preview.affects);
+    }
+  };
+
   async function respond(request: CodexRequest, approved: boolean) {
     setPending(true);
     try {
-      await action({
-        action: "respond",
-        id: request.id,
-        approved,
-        answers: Object.fromEntries(Object.entries(answers).map(([key, value]) => [key, { answers: [value] }])),
-      });
-      if (approved && request.method === "item/tool/call" && request.preview?.affects) onApplied?.(request.preview.affects);
-      setAnswers({});
+      if (await onRespond(request.id, approved, answers)) {
+        applied(request, approved);
+        setAnswers({});
+      }
     } finally {
       setPending(false);
     }
@@ -128,8 +133,8 @@ export function CodexControls({ state, action, onApplied }: Props) {
     setPending(true);
     try {
       for (const request of items) {
-        await action({ action: "respond", id: request.id, approved });
-        if (approved && request.method === "item/tool/call" && request.preview?.affects) onApplied?.(request.preview.affects);
+        if (!(await onRespond(request.id, approved))) break;
+        applied(request, approved);
       }
     } finally {
       setPending(false);

@@ -3,7 +3,7 @@ import "server-only";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { CodexCatalogModel, CodexModelOption } from "@/lib/codex-types";
+import type { CodexModelOption } from "@/lib/codex-types";
 
 type TomlSection = { path: string[]; values: Record<string, string> };
 type ConfigSource = { name?: string; sections: TomlSection[] };
@@ -153,36 +153,78 @@ function profileFileOptions(sources: ConfigSource[], allSections: TomlSection[])
   });
 }
 
-function catalogOptions(catalog: CodexCatalogModel[]) {
-  return catalog
-    .filter((model) => Boolean(model.model) && !model.hidden && (!model.inputModalities?.length || model.inputModalities.includes("text")))
-    .map((model) => {
-      const id = model.model || "";
-      const displayName = model.displayName?.trim() || "";
-      const label =
-        displayName && displayName !== id && !displayName.includes(id)
-          ? `${displayName} · ${id}`
-          : displayName || id || "未命名模型";
-      return {
-        id: `catalog:${id}`,
-        label,
-        model: model.model || null,
-        provider: null,
-        available: true,
-        detail: model.isDefault ? "Codex 当前默认模型" : model.description || "来自 Codex App Server 模型目录",
-      };
-    });
+function extractProviderToken(
+  provider: TomlSection | undefined,
+  headers: TomlSection | undefined,
+) {
+  if (!provider) return undefined;
+  if (provider.values.experimental_bearer_token) return provider.values.experimental_bearer_token;
+  const inlineHeaders = provider.values.http_headers?.match(/(?:^|[,{])\s*["']?Authorization["']?\s*=\s*"([^"]*)"/i);
+  const authorization = headers?.values.Authorization || inlineHeaders?.[1];
+  if (authorization?.startsWith("Bearer ")) return authorization.slice("Bearer ".length).trim();
+  const envKey = provider.values.env_key;
+  if (envKey) return process.env[envKey];
+  return undefined;
 }
 
-export async function getCodexModelOptions(catalog: CodexCatalogModel[] = []): Promise<CodexModelOption[]> {
+const LLMLITE_CACHE_MS = 30_000;
+let llmliteCache: { at: number; key: string; options: CodexModelOption[] } | null = null;
+
+/** Models advertised by the LLMLite gateway. A short cache keeps each chat turn from waiting on `/models`. */
+async function llmliteDynamicOptions(allSections: TomlSection[]): Promise<CodexModelOption[]> {
+  const provider = findSection(allSections, ["model_providers", "llmlite"]);
+  const headers = findSection(allSections, ["model_providers", "llmlite", "http_headers"]);
+  if (provider && !providerReady(provider, headers)) return [];
+
+  const baseUrl = (provider?.values.base_url || process.env.LLMLITE_BASE_URL || "").replace(/\/+$/, "");
+  const token = extractProviderToken(provider, headers) || process.env.LLMLITE_API_KEY || "";
+  if (!baseUrl || (!provider && !process.env.LLMLITE_BASE_URL && !process.env.LLMLITE_API_KEY)) return [];
+
+  const cacheKey = `${baseUrl}\n${token}`;
+  if (llmliteCache && llmliteCache.key === cacheKey && Date.now() - llmliteCache.at < LLMLITE_CACHE_MS) {
+    return llmliteCache.options;
+  }
+
+  try {
+    const response = await fetch(`${baseUrl}/models`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      cache: "no-store",
+      signal: AbortSignal.timeout(4_000),
+    });
+    if (!response.ok) throw new Error(`LLMLite /models HTTP ${response.status}`);
+    const payload = (await response.json()) as { data?: Array<{ id?: unknown }> };
+    const providerLabel = provider?.values.name || "LLMLite";
+    const options: CodexModelOption[] = [];
+    for (const item of payload.data || []) {
+      const model = typeof item?.id === "string" ? item.id.trim() : "";
+      if (!model) continue;
+      options.push({
+        id: `llmlite:${model}`,
+        label: formatModelLabel(providerLabel, model),
+        model,
+        provider: "llmlite",
+        available: true,
+        detail: `来自 LLMLite 网关 (${baseUrl})`,
+      });
+    }
+    llmliteCache = { at: Date.now(), key: cacheKey, options };
+    return options;
+  } catch {
+    if (llmliteCache?.key === cacheKey) return llmliteCache.options;
+    return [];
+  }
+}
+
+export async function getCodexModelOptions(): Promise<CodexModelOption[]> {
   const sources = await readConfig();
   const mainSections = sources.find((source) => !source.name)?.sections || [];
   const allSections = sources.flatMap((source) => source.sections);
+  // Custom providers/profiles + LLMLite only — never stock Codex GPT catalog.
   const all = [
     ...configuredDefault(mainSections),
     ...profileOptions(mainSections),
     ...profileFileOptions(sources, allSections),
-    ...catalogOptions(catalog),
+    ...(await llmliteDynamicOptions(allSections)),
   ];
   const seen = new Set<string>();
   return all.filter((option) => {
@@ -192,8 +234,8 @@ export async function getCodexModelOptions(catalog: CodexCatalogModel[] = []): P
   });
 }
 
-export async function resolveCodexModel(modelId: unknown, catalog: CodexCatalogModel[] = []) {
-  const options = await getCodexModelOptions(catalog);
+export async function resolveCodexModel(modelId: unknown) {
+  const options = await getCodexModelOptions();
   const requested = typeof modelId === "string" && modelId ? options.find((option) => option.id === modelId) : options[0];
   if (!requested) throw new Error("当前 Codex 配置没有可用的文本模型");
   return requested;

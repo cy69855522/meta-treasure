@@ -1,29 +1,219 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, chmod, rm, readFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import { once } from 'node:events';
-const delay=ms=>new Promise(r=>setTimeout(r,ms));
-test('read-only chat service',async()=>{
- const dir=await mkdtemp(resolve('.codex-service-test-')),fake=join(dir,'codex'); await writeFile(join(dir,'token'),'test-token');
- await writeFile(fake,`#!/usr/bin/env node
-const rl=require('node:readline').createInterface({input:process.stdin});const send=m=>console.log(JSON.stringify(m));let thread='thread',n=0;if(process.env.CODEX_HOME!==process.env.EXPECTED_CODEX_HOME)process.exit(2);
-rl.on('line',line=>{const m=JSON.parse(line),p=m.params||{};
-if(m.method==='initialize')send({id:m.id,result:{}});
-if(m.method==='model/list')send({id:m.id,result:{data:[{model:'catalog-model',displayName:'Catalog Model',inputModalities:['text'],isDefault:true}],nextCursor:null}});
-if(m.method==='thread/start'){if(p.sandbox!=='read-only'||p.approvalPolicy!=='never')return send({id:m.id,error:{message:'not read only'}});thread='thread-'+(++n);send({id:m.id,result:{thread:{id:thread}}});}
-if(m.method==='thread/resume')send({id:m.id,result:{}});
-if(m.method==='turn/start'){send({id:m.id,result:{turn:{id:'turn'}}});send({method:'turn/started',params:{threadId:thread,turn:{id:'turn'}}});const text=p.input.find(i=>i.type==='text')?.text||'';if(text.endsWith('approve'))send({id:900,method:'item/tool/call',params:{threadId:thread,tool:'createTask',arguments:{title:'task'}}});else if(text.endsWith('reconnect')){for(let i=1;i<=3;i++)send({method:'error',params:{threadId:thread,willRetry:true,error:{message:'Reconnecting... '+i+'/5'}}});send({method:'item/agentMessage/delta',params:{threadId:thread,itemId:'answer-'+n,delta:'RECOVERED'}});send({method:'turn/completed',params:{threadId:thread,turn:{status:'completed'}}});}else{send({method:'item/agentMessage/delta',params:{threadId:thread,itemId:'answer-'+n,delta:p.input.some(i=>i.type==='localImage')?'IMAGE':'OK'}});send({method:'item/started',params:{threadId:thread,item:{id:'hidden',type:'commandExecution',command:'rg src'}}});send({method:'turn/diff/updated',params:{threadId:thread,diff:'+hidden'}});send({method:'turn/completed',params:{threadId:thread,turn:{status:'completed'}}});}}
-if(m.id===900&&m.result)send({method:'turn/completed',params:{threadId:thread,turn:{status:'completed'}}});});`); await chmod(fake,0o700);
- const scope='00000000-0000-4000-8000-000000000002',port=38000+(process.pid%1000);let child;
- const call=(action,body={})=>new Promise((resolveCall,reject)=>{const req=http.request({host:'127.0.0.1',port,path:'/'+action,method:'POST',headers:{Authorization:'Bearer test-token'}},res=>{let text='';res.on('data',d=>text+=d);res.on('end',()=>resolveCall(JSON.parse(text)));});req.on('error',reject);req.end(JSON.stringify({scope,...body}));});
- async function launch(){const codexHome=join(dir,'codex-home');child=spawn(process.execPath,[resolve('scripts/codex-service.mjs')],{env:{...process.env,CODEX_BIN:fake,PROGRESS_CODEX_HOME:codexHome,EXPECTED_CODEX_HOME:codexHome,PROGRESS_CODEX_STATE_DIR:dir,PROGRESS_CODEX_TEST_PORT:String(port)},stdio:'ignore'});for(let i=0;i<100;i++){try{if((await call('health')).ok)return;}catch{}await delay(20);}throw new Error('startup failed');}
- async function settle(){for(let i=0;i<100;i++){const s=await call('state');if(['ready','error'].includes(s.status)||s.requests.length)return s;await delay(20);}throw new Error('turn timed out');}
- try{await launch();assert.equal((await call('health')).version,31);const direct=await call('complete',{text:'hello',instructions:'deep radar'});assert.equal(direct.t,'ok');assert.equal(direct.text,'OK');const recovered=await call('complete',{text:'reconnect',instructions:'deep radar'});assert.equal(recovered.t,'ok');assert.equal(recovered.text,'RECOVERED');await call('init',{messages:[{id:'old',role:'assistant',parts:[{type:'activity',id:'command'}]}]});let s=await call('state');assert.equal(s.messages.length,0);s=await call('directory',{cwd:dir});assert.equal(s.cwd,dir);
- await call('start',{text:'hello',instructions:'read only',tools:[],skills:[{id:'skill-1',name:'diagnose',command:'diagnose'}]});s=await settle();assert.equal(s.messages.at(-1).parts.find(p=>p.type==='text').text,'OK');assert.equal(s.messages.at(-1).parts.find(p=>p.type==='skill').name,'diagnose');assert.equal('items' in s,false);assert.equal('diff' in s,false);assert.equal(s.messages.flatMap(m=>m.parts).some(p=>p.type==='activity'),false);
- const imagePath=join(dir,'image.png');await writeFile(imagePath,'image');await call('start',{text:'',images:[{id:'image.png',name:'image.png',url:'/image',path:imagePath,mimeType:'image/png'}],instructions:'read only',tools:[]});s=await settle();assert.match([...s.messages].reverse().find(m=>m.role==='assistant').parts.find(p=>p.type==='text').text,/IMAGE$/);assert.equal([...s.messages].reverse().find(m=>m.role==='user').parts.find(p=>p.type==='image').path,imagePath);
- await call('start',{text:'approve',instructions:'read only',tools:[]});s=await settle();assert.equal(s.requests[0].params.tool,'createTask');await call('claim',{id:900});await call('respond',{id:900,result:{success:true,contentItems:[]}});s=await settle();assert.equal(s.status,'ready');const count=s.messages.length;child.kill();await once(child,'exit');await launch();s=await call('state');assert.equal(s.messages.length,count);
- }finally{if(child?.exitCode===null){child.kill();await once(child,'exit');}await rm(dir,{recursive:true,force:true});}
-});
+
+const delay = ms => new Promise(r => setTimeout(r, ms));
+const { version: expectedVersion } = JSON.parse(
+  await readFile(resolve('scripts/codex-service/version.json'), 'utf8'),
+);
+
+/** A scripted stand-in for `codex app-server`; the prompt's last word picks the behaviour. */
+const FAKE_CODEX = await readFile(resolve('scripts/codex-service/fixtures/fake-codex.cjs'), 'utf8');
+
+async function withService(run) {
+  const dir = await mkdtemp(resolve('.codex-service-test-'));
+  const fake = join(dir, 'codex');
+  await writeFile(join(dir, 'token'), 'test-token');
+  await writeFile(fake, FAKE_CODEX);
+  await chmod(fake, 0o700);
+  const scope = '00000000-0000-4000-8000-000000000002';
+  const port = 38000 + ((process.pid + Math.floor(Math.random() * 500)) % 1000);
+  let child;
+
+  const call = (action, body = {}) => new Promise((resolveCall, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port, path: '/' + action, method: 'POST', headers: { Authorization: 'Bearer test-token' } },
+      res => {
+        let text = '';
+        res.on('data', d => (text += d));
+        res.on('end', () => resolveCall(JSON.parse(text)));
+      },
+    );
+    req.on('error', reject);
+    req.end(JSON.stringify({ scope, ...body }));
+  });
+
+  async function launch() {
+    const codexHome = join(dir, 'codex-home');
+    child = spawn(process.execPath, [resolve('scripts/codex-service.mjs')], {
+      env: { ...process.env, CODEX_BIN: fake, PROGRESS_CODEX_HOME: codexHome, EXPECTED_CODEX_HOME: codexHome, PROGRESS_CODEX_STATE_DIR: dir, PROGRESS_CODEX_TEST_PORT: String(port) },
+      stdio: 'ignore',
+    });
+    for (let i = 0; i < 100; i++) {
+      try { if ((await call('health')).ok) return; } catch { /* starting */ }
+      await delay(20);
+    }
+    throw new Error('startup failed');
+  }
+
+  async function settle() {
+    for (let i = 0; i < 100; i++) {
+      const s = await call('state');
+      if (['ready', 'error'].includes(s.status) || s.requests.length) return s;
+      await delay(20);
+    }
+    throw new Error('turn timed out');
+  }
+
+  async function restart() {
+    child.kill();
+    await once(child, 'exit');
+    await launch();
+  }
+
+  try {
+    await launch();
+    await run({ call, settle, restart, dir, scope });
+  } finally {
+    if (child?.exitCode === null) { child.kill(); await once(child, 'exit'); }
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+const lastText = s => s.messages.at(-1).parts.find(p => p.type === 'text')?.text;
+const start = (call, text, extra = {}) => call('start', { text, instructions: 'read only', tools: [], ...extra });
+
+test('health reports the shared service version', () => withService(async ({ call }) => {
+  assert.equal((await call('health')).version, expectedVersion);
+}));
+
+test('direct turns stream results and survive provider reconnects', () => withService(async ({ call }) => {
+  const direct = await call('complete', { text: 'hello', instructions: 'deep radar' });
+  assert.equal(direct.t, 'ok');
+  assert.match(direct.text, /^OK/);
+  const recovered = await call('complete', { text: 'reconnect', instructions: 'deep radar' });
+  assert.equal(recovered.text, 'RECOVERED');
+}));
+
+test('chat turn: init, skills, hidden execution, image input, rev counter', () => withService(async ({ call, settle, dir }) => {
+  let s = await call('state');
+  assert.equal(s.initialized, false);
+  s = await call('init', { messages: [{ id: 'old', role: 'assistant', parts: [{ type: 'activity', id: 'command' }] }] });
+  assert.equal(s.messages.length, 0);
+  assert.equal(s.initialized, true);
+  // init only takes effect once
+  const again = await call('init', { messages: [{ id: 'x', role: 'user', parts: [{ type: 'text', text: 'x' }] }] });
+  assert.equal(again.messages.length, 0);
+  assert.equal(again.rev, s.rev);
+
+  s = await call('directory', { cwd: dir });
+  assert.equal(s.cwd, dir);
+
+  const before = s.rev;
+  await start(call, 'hello', { skills: [{ id: 'skill-1', name: 'diagnose', command: 'diagnose' }] });
+  s = await settle();
+  assert.match(lastText(s), /^OK/);
+  assert.equal(s.messages.at(-1).parts.find(p => p.type === 'skill').name, 'diagnose');
+  assert.ok(s.rev > before);
+  for (const internal of ['items', 'diff', 'threadId', 'turnId', 'libraryKey', 'turnTextByItem']) {
+    assert.equal(internal in s, false, `${internal} must stay inside the service`);
+  }
+
+  const imagePath = join(dir, 'image.png');
+  await writeFile(imagePath, 'image');
+  await start(call, '', { images: [{ id: 'image.png', name: 'image.png', url: '/image', path: imagePath, mimeType: 'image/png' }] });
+  s = await settle();
+  const assistant = [...s.messages].reverse().find(m => m.role === 'assistant');
+  assert.match(assistant.parts.find(p => p.type === 'text').text, /IMAGE$/);
+}));
+
+test('a leaked-argument reply is an error and the retry rebuilds the thread', () => withService(async ({ call, settle }) => {
+  await start(call, 'hello');
+  let s = await settle();
+  const firstThread = lastText(s).split(':')[1];
+
+  await start(call, 'leak');
+  s = await settle();
+  assert.equal(s.status, 'error');
+  assert.equal(lastText(s), '');
+  assert.match(s.error, /工具参数名/);
+
+  await start(call, 'hello', { retry: true });
+  s = await settle();
+  assert.equal(s.status, 'ready');
+  assert.notEqual(lastText(s).split(':')[1], firstThread, 'poisoned thread must not be resumed');
+}));
+
+test('an empty reply after tools ran is an error, and retry recovers', () => withService(async ({ call, settle }) => {
+  await start(call, 'blank');
+  let s = await settle();
+  assert.equal(s.requests[0].params.tool, 'webSearch');
+  await call('claim', { id: 902 });
+  await call('respond', { id: 902, result: { success: true, contentItems: [] } });
+  s = await settle();
+  assert.equal(s.status, 'error');
+  assert.match(s.error, /没有给出最终回答/);
+
+  await start(call, 'hello', { retry: true });
+  s = await settle();
+  assert.equal(s.status, 'ready');
+  assert.equal(s.error, null);
+}));
+
+test('tool requests: claim is a lease and respond is idempotent', () => withService(async ({ call, settle }) => {
+  await start(call, 'approve');
+  let s = await settle();
+  assert.equal(s.requests[0].params.tool, 'createTask');
+  assert.equal(s.requests[0].claimed, false);
+
+  assert.deepEqual(await call('claim', { id: 900 }), { claimed: true });
+  assert.deepEqual(await call('claim', { id: 900 }), { claimed: false }, 'second claimer loses without an error');
+  s = await call('state');
+  assert.equal(s.requests[0].claimed, true);
+
+  await call('respond', { id: 900, result: { success: true, contentItems: [] } });
+  s = await settle();
+  assert.equal(s.status, 'ready');
+  assert.equal(s.requests.length, 0);
+
+  // Late duplicates are harmless.
+  assert.deepEqual(await call('claim', { id: 900 }), { claimed: false });
+  const replay = await call('respond', { id: 900, result: { success: true, contentItems: [] } });
+  assert.equal(replay.status, 'ready');
+  assert.equal(replay.error, null);
+}));
+
+test('presentation is rendered generically: begin on claim, done on respond', () => withService(async ({ call, settle }) => {
+  await start(call, 'search');
+  let s = await settle();
+  assert.equal(s.requests[0].params.tool, 'webSearch');
+
+  const progress = { search: { id: 'call-1', query: 'q', sources: ['example.com'], status: 'searching', phase: 'search' } };
+  await call('claim', { id: 901, presentation: progress });
+  s = await call('state');
+  let bar = s.messages.at(-1).parts.find(p => p.type === 'search');
+  assert.equal(bar.status, 'searching');
+  assert.equal(bar.callId, 'call-1');
+
+  const finished = { search: { id: 'search-9', query: 'q', hits: [{ id: 'h', url: 'https://example.com', title: 'T' }], status: 'done' } };
+  await call('respond', { id: 901, result: { success: true, contentItems: [] }, presentation: finished });
+  s = await settle();
+  const bars = s.messages.at(-1).parts.filter(p => p.type === 'search');
+  assert.equal(bars.length, 1, 'begin and done must be one bar');
+  assert.equal(bars[0].status, 'done');
+  assert.equal(bars[0].hits.length, 1);
+}));
+
+test('stopping mid-search never leaves a spinning bar', () => withService(async ({ call, settle }) => {
+  await start(call, 'search');
+  await settle();
+  await call('claim', { id: 901, presentation: { search: { id: 'call-1', status: 'fetching', phase: 'fetch' } } });
+  await call('stop');
+  const s = await settle();
+  assert.equal(s.status, 'ready');
+  assert.equal(s.messages.at(-1).parts.find(p => p.type === 'search').status, 'error');
+}));
+
+test('state survives a service restart and unknown actions are rejected', () => withService(async ({ call, settle, restart }) => {
+  await start(call, 'hello');
+  let s = await settle();
+  const count = s.messages.length;
+  await restart();
+  s = await call('state');
+  assert.equal(s.messages.length, count);
+  assert.match((await call('nope')).error, /未知操作/);
+}));

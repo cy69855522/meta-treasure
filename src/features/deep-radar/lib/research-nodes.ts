@@ -191,6 +191,18 @@ export async function findingsNode(
 
     const summary = decision.summary.trim();
     const analysis = decision.analysis.trim();
+    if (!summary) {
+      // 模型给了无法解析的内容（例如空输出）。让本轮以「本轮无可用结论」收尾，
+      // 避免因为一次格式问题把整场研究冻在 paused。
+      return {
+        summary: "",
+        analysis: `本轮模型未返回可解析的 findings，已跳过。`,
+        findings: "",
+        gaps: "本轮模型未返回可解析的 findings，已跳过。",
+        keywords: [],
+        shouldStop: false,
+      };
+    }
     const keywords = mergeKeywords(
       decision.keywords,
       extractEqualsMarks(summary).marks,

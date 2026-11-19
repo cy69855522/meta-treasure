@@ -40,6 +40,7 @@ import {
   getStewardMemoryNote,
   getTask,
   listActiveProjects,
+  markSkillsUsed,
   reorderProjects,
   setProjectInPiggyBank,
   updateAgentMemoryNote,
@@ -50,6 +51,7 @@ import {
   updateStewardMemoryNote,
   updateTask,
 } from "@/lib/db";
+import { skillCommandName } from "@/lib/skill-commands";
 import { LANE_LABELS, LANES, NOW_WIP_LIMIT, type Lane } from "@/lib/types";
 
 export type {
@@ -984,6 +986,7 @@ function previewPiggyMove(
 function skillReadTools(): ToolSet {
   return {
     getSkill: tool({
+      autoApprove: true,
       description:
         "按需加载一条 Skill 的完整正文（含 body）。当用户问题与技能库目录中某条 description 相关时先调用再回答；只读，无需用户确认。",
       inputSchema: z.object({
@@ -992,6 +995,7 @@ function skillReadTools(): ToolSet {
       execute: async ({ skillId }) => {
         const skill = getSkill(skillId);
         if (!skill) throw new Error("Skill not found");
+        markSkillsUsed([skill.id]);
         const folder = getSkillFolder(skill.folderId);
         return {
           ok: true as const,
@@ -999,6 +1003,14 @@ function skillReadTools(): ToolSet {
           folderName: folder?.name ?? null,
         };
       },
+      present: (_input, output) => ({
+        skill: {
+          id: output.skill.id,
+          name: output.skill.name,
+          command: skillCommandName(output.skill.name),
+          description: output.skill.description,
+        },
+      }),
     }),
   };
 }
@@ -1249,6 +1261,7 @@ function libraryTools(): ToolSet {
       },
     }),
     getRule: tool({
+      autoApprove: true,
       description:
         "读取一条 Rule 的完整内容（含 body）。复制、对照或按原文修改前先调用；只读，无需用户确认。",
       inputSchema: z.object({
@@ -1264,6 +1277,13 @@ function libraryTools(): ToolSet {
           folderName: folder?.name ?? null,
         };
       },
+      present: (_input, output) => ({
+        rule: {
+          id: output.rule.id,
+          name: output.rule.name,
+          description: output.rule.description,
+        },
+      }),
     }),
   };
 }
